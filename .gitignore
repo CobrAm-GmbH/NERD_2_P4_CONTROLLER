@@ -1,0 +1,19 @@
+# Build output
+build/
+dist/
+
+# ESP-IDF generated files
+sdkconfig.old
+managed_components/
+
+# SquareLine temporary files
+**/squareline/backup/**
+**/squareline/autosave/**
+
+# Do not vendor LVGL source
+components/lvgl/**
+
+# Editor / OS junk
+.vscode/
+.DS_Store
+Thumbs.db
