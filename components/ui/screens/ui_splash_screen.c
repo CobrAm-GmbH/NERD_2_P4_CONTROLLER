@@ -192,14 +192,16 @@ void ui_splash_screen_screen_init(void)
     lv_obj_add_flag(ui_splash_screen_image_qr_code, LV_OBJ_FLAG_CLICKABLE);     /// Flags
     lv_obj_remove_flag(ui_splash_screen_image_qr_code, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
 
-    ui_splash_screen_text_created_by = lv_textarea_create(ui_splash_screen);
+    ui_splash_screen_text_created_by = lv_label_create(ui_splash_screen);
+	lv_label_set_long_mode(ui_splash_screen_text_created_by, LV_LABEL_LONG_WRAP);
+	lv_obj_set_scrollbar_mode(ui_splash_screen_text_created_by, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_width(ui_splash_screen_text_created_by, 662);
     lv_obj_set_height(ui_splash_screen_text_created_by, 261);
     lv_obj_set_x(ui_splash_screen_text_created_by, 105);
-    lv_obj_set_y(ui_splash_screen_text_created_by, 205);
-    lv_textarea_set_text(ui_splash_screen_text_created_by,
-                         "Proudly created and developed in the European Union by CobrAm GmbH.\n\nThe N.E.R.D. Watermaker Controller project is continuously developed with the support and feedback of the sailing and maker community.\n\nSource code may be shared privately through our official GitHub repositories exclusively for personal, educational, testing, and non-commercial purposes for fellow NERD sailors interested in contributing to the project and its development.\n\nAny commercial use, redistribution, reproduction, modification, integration into commercial products, or use of the source code, firmware, graphics, or portions thereof without prior written authorization from CobrAm GmbH is strictly prohibited.\n\nAll intellectual property rights, including software architecture, interface design, graphics, branding, and associated materials, remain the exclusive property of CobrAm GmbH.");
-    lv_textarea_set_placeholder_text(ui_splash_screen_text_created_by, "Placeholder...");
+    lv_obj_set_y(ui_splash_screen_text_created_by, 195);
+	lv_obj_set_style_pad_top(ui_splash_screen_text_created_by, 25, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_label_set_text(ui_splash_screen_text_created_by,
+                         "Proudly created and developed in the European Union by CobrAm GmbH.\n\nThe N.E.R.D. Watermaker Controller project is continuously developed with the support and feedback of the sailing and maker community.\n\nSource code may be shared privately through our official GitHub repositories exclusively for personal, educational, testing, and non-commercial purposes for fellow NERD sailors interested in contributing to the project and its development.\n\nAny commercial use, redistribution, reproduction, modification, integration into commercial products, or use of the source code, firmware, graphics, or portions thereof without prior written authorization from CobrAm GmbH is strictly prohibited.\n\nAll intellectual property rights, including software architecture, interface design, graphics, branding, and associated materials, remain the exclusive property of CobrAm GmbH.");    
     lv_obj_set_style_text_color(ui_splash_screen_text_created_by, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_splash_screen_text_created_by, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_splash_screen_text_created_by, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);

@@ -26,16 +26,16 @@ idf_component_register(
         "images/ui_img_btn_main_off_png.c"
         "images/ui_img_btn_main_on_png.c"
         "images/ui_img_btn_main_png.c"
-        "images/ui_img_btn_settings_png.c"        
+        "images/ui_img_btn_settings_png.c"
         "images/ui_img_btn_z_top_png.c"
         "images/ui_img_icn_head_png.c"
         "images/ui_img_icn_time_1_png.c"
-        "images/ui_img_icn_time_2_png.c"        
+        "images/ui_img_icn_time_2_png.c"
         "images/ui_img_menu_bar_png.c"
         "images/ui_img_roller_bg_png.c"
         "images/ui_img_top_bar_png.c"
-		"images/ui_img_logo_negativo_traspsrente_130_px_png.c"
-		"images/ui_img_btn_z_botton_png.c"
+        "images/ui_img_logo_negativo_traspsrente_130_px_png.c"
+        "images/ui_img_btn_z_botton_png.c"
 
         "fonts/ui_font_Small_Font.c"
 
@@ -48,4 +48,6 @@ idf_component_register(
 
     REQUIRES
         lvgl
+        esp_driver_tsens
+		nvs_flash
 )

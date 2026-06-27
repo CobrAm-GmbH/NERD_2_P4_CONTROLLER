@@ -14,6 +14,8 @@
 
 #include "ui.h"
 
+#include "ethernet_manager.h"
+
 void app_main(void)
 {
     bsp_display_cfg_t cfg = {
@@ -29,6 +31,7 @@ void app_main(void)
 
     bsp_display_start_with_config(&cfg);
     bsp_display_backlight_on();
+	ethernet_manager_start();
 
     bsp_display_lock(-1);
 

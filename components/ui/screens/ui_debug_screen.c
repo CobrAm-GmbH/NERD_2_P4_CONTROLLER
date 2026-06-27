@@ -21,9 +21,18 @@ lv_obj_t * ui_debug_btn_menu_debug = NULL;
 lv_obj_t * ui_debug_screen_container_1 = NULL;
 lv_obj_t * ui_debug_screen_label_1 = NULL;
 lv_obj_t * ui_debug_screen_textarea_1 = NULL;
-lv_obj_t * ui_debug_screen_container_2 = NULL;
-lv_obj_t * ui_debug_screen_label_2 = NULL;
-lv_obj_t * ui_debug_screen_textarea_2 = NULL;
+lv_obj_t * ui_debug_screen_valve_container = NULL;
+lv_obj_t * ui_debug_screen_label_valve_title = NULL;
+lv_obj_t * ui_debug_screen_label_valve_status = NULL;
+lv_obj_t * ui_debug_screen_label_valve_position = NULL;
+lv_obj_t * ui_debug_screen_btn_valve_open = NULL;
+lv_obj_t * ui_debug_screen_label_valve_open = NULL;
+lv_obj_t * ui_debug_screen_btn_valve_close = NULL;
+lv_obj_t * ui_debug_screen_label_valve_close = NULL;
+lv_obj_t * ui_debug_screen_btn_valve_zero_open = NULL;
+lv_obj_t * ui_debug_screen_label_valve_zero_open = NULL;
+lv_obj_t * ui_debug_screen_btn_valve_zero_closed = NULL;
+lv_obj_t * ui_debug_screen_label_valve_zero_closed = NULL;
 // event funtions
 void ui_event_btn_menu_debug(lv_event_t * e)
 {
@@ -205,41 +214,127 @@ void ui_debug_screen_screen_init(void)
     lv_obj_set_style_bg_color(ui_debug_screen_textarea_1, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(ui_debug_screen_textarea_1, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    ui_debug_screen_container_2 = lv_obj_create(ui_debug_screen);
-    lv_obj_remove_style_all(ui_debug_screen_container_2);
-    lv_obj_set_width(ui_debug_screen_container_2, 304);
-    lv_obj_set_height(ui_debug_screen_container_2, 391);
-    lv_obj_set_x(ui_debug_screen_container_2, 206);
-    lv_obj_set_y(ui_debug_screen_container_2, 15);
-    lv_obj_set_align(ui_debug_screen_container_2, LV_ALIGN_CENTER);
-    lv_obj_remove_flag(ui_debug_screen_container_2, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);      /// Flags
-    lv_obj_set_style_radius(ui_debug_screen_container_2, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(ui_debug_screen_container_2, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(ui_debug_screen_container_2, 100, LV_PART_MAIN | LV_STATE_DEFAULT);
+    ui_debug_screen_valve_container = lv_obj_create(ui_debug_screen);
+    lv_obj_remove_style_all(ui_debug_screen_valve_container);
+    lv_obj_set_width(ui_debug_screen_valve_container, 304);
+    lv_obj_set_height(ui_debug_screen_valve_container, 391);
+    lv_obj_set_x(ui_debug_screen_valve_container, 206);
+    lv_obj_set_y(ui_debug_screen_valve_container, 15);
+    lv_obj_set_align(ui_debug_screen_valve_container, LV_ALIGN_CENTER);
+    lv_obj_remove_flag(ui_debug_screen_valve_container, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+    lv_obj_set_style_radius(ui_debug_screen_valve_container, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(ui_debug_screen_valve_container, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(ui_debug_screen_valve_container, 100, LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    ui_debug_screen_label_2 = lv_label_create(ui_debug_screen_container_2);
-    lv_obj_set_width(ui_debug_screen_label_2, LV_SIZE_CONTENT);   /// 1
-    lv_obj_set_height(ui_debug_screen_label_2, LV_SIZE_CONTENT);    /// 1
-    lv_obj_set_x(ui_debug_screen_label_2, -3);
-    lv_obj_set_y(ui_debug_screen_label_2, 16);
-    lv_obj_set_align(ui_debug_screen_label_2, LV_ALIGN_TOP_MID);
-    lv_label_set_text(ui_debug_screen_label_2, "BOOT");
-    lv_obj_set_style_text_color(ui_debug_screen_label_2, lv_color_hex(0xD2DCF2), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_opa(ui_debug_screen_label_2, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_align(ui_debug_screen_label_2, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(ui_debug_screen_label_2, &ui_font_Small_Font, LV_PART_MAIN | LV_STATE_DEFAULT);
+    ui_debug_screen_label_valve_title = lv_label_create(ui_debug_screen_valve_container);
+    lv_obj_set_width(ui_debug_screen_label_valve_title, LV_SIZE_CONTENT);
+    lv_obj_set_height(ui_debug_screen_label_valve_title, LV_SIZE_CONTENT);
+    lv_obj_set_x(ui_debug_screen_label_valve_title, 0);
+    lv_obj_set_y(ui_debug_screen_label_valve_title, 16);
+    lv_obj_set_align(ui_debug_screen_label_valve_title, LV_ALIGN_TOP_MID);
+    lv_label_set_text(ui_debug_screen_label_valve_title, "NEEDLE VALVE");
+    lv_obj_set_style_text_color(ui_debug_screen_label_valve_title, lv_color_hex(0xD2DCF2), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_opa(ui_debug_screen_label_valve_title, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_align(ui_debug_screen_label_valve_title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_debug_screen_label_valve_title, &ui_font_Small_Font, LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    ui_debug_screen_textarea_2 = lv_textarea_create(ui_debug_screen_container_2);
-    lv_obj_set_width(ui_debug_screen_textarea_2, 261);
-    lv_obj_set_height(ui_debug_screen_textarea_2, 302);
-    lv_obj_set_x(ui_debug_screen_textarea_2, 20);
-    lv_obj_set_y(ui_debug_screen_textarea_2, 62);
-    lv_textarea_set_text(ui_debug_screen_textarea_2, "TEXT");
-    lv_textarea_set_placeholder_text(ui_debug_screen_textarea_2, "Placeholder...");
-    lv_obj_set_style_text_color(ui_debug_screen_textarea_2, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_opa(ui_debug_screen_textarea_2, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(ui_debug_screen_textarea_2, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(ui_debug_screen_textarea_2, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    ui_debug_screen_label_valve_status = lv_label_create(ui_debug_screen_valve_container);
+    lv_obj_set_width(ui_debug_screen_label_valve_status, 250);
+    lv_obj_set_height(ui_debug_screen_label_valve_status, LV_SIZE_CONTENT);
+    lv_obj_set_x(ui_debug_screen_label_valve_status, 0);
+    lv_obj_set_y(ui_debug_screen_label_valve_status, 62);
+    lv_obj_set_align(ui_debug_screen_label_valve_status, LV_ALIGN_TOP_MID);
+    lv_label_set_text(ui_debug_screen_label_valve_status, "S3 VALVE NODE: n.a.");
+    lv_obj_set_style_text_color(ui_debug_screen_label_valve_status, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_opa(ui_debug_screen_label_valve_status, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_align(ui_debug_screen_label_valve_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_debug_screen_label_valve_status, &ui_font_Small_Font, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_debug_screen_label_valve_position = lv_label_create(ui_debug_screen_valve_container);
+    lv_obj_set_width(ui_debug_screen_label_valve_position, 250);
+    lv_obj_set_height(ui_debug_screen_label_valve_position, LV_SIZE_CONTENT);
+    lv_obj_set_x(ui_debug_screen_label_valve_position, 0);
+    lv_obj_set_y(ui_debug_screen_label_valve_position, 104);
+    lv_obj_set_align(ui_debug_screen_label_valve_position, LV_ALIGN_TOP_MID);
+    lv_label_set_text(ui_debug_screen_label_valve_position, "POSITION: -- / 6.5 turns");
+    lv_obj_set_style_text_color(ui_debug_screen_label_valve_position, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_opa(ui_debug_screen_label_valve_position, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_align(ui_debug_screen_label_valve_position, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_debug_screen_label_valve_position, &ui_font_Small_Font, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_debug_screen_btn_valve_open = lv_button_create(ui_debug_screen_valve_container);
+    lv_obj_set_width(ui_debug_screen_btn_valve_open, 118);
+    lv_obj_set_height(ui_debug_screen_btn_valve_open, 54);
+    lv_obj_set_x(ui_debug_screen_btn_valve_open, -67);
+    lv_obj_set_y(ui_debug_screen_btn_valve_open, 170);
+    lv_obj_set_align(ui_debug_screen_btn_valve_open, LV_ALIGN_TOP_MID);
+    lv_obj_add_flag(ui_debug_screen_btn_valve_open, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_radius(ui_debug_screen_btn_valve_open, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(ui_debug_screen_btn_valve_open, lv_color_hex(0x3A445C), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(ui_debug_screen_btn_valve_open, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_debug_screen_label_valve_open = lv_label_create(ui_debug_screen_btn_valve_open);
+    lv_obj_set_width(ui_debug_screen_label_valve_open, LV_SIZE_CONTENT);
+    lv_obj_set_height(ui_debug_screen_label_valve_open, LV_SIZE_CONTENT);
+    lv_obj_set_align(ui_debug_screen_label_valve_open, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_debug_screen_label_valve_open, "OPEN");
+    lv_obj_set_style_text_font(ui_debug_screen_label_valve_open, &ui_font_Small_Font, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_debug_screen_btn_valve_close = lv_button_create(ui_debug_screen_valve_container);
+    lv_obj_set_width(ui_debug_screen_btn_valve_close, 118);
+    lv_obj_set_height(ui_debug_screen_btn_valve_close, 54);
+    lv_obj_set_x(ui_debug_screen_btn_valve_close, 67);
+    lv_obj_set_y(ui_debug_screen_btn_valve_close, 170);
+    lv_obj_set_align(ui_debug_screen_btn_valve_close, LV_ALIGN_TOP_MID);
+    lv_obj_add_flag(ui_debug_screen_btn_valve_close, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_radius(ui_debug_screen_btn_valve_close, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(ui_debug_screen_btn_valve_close, lv_color_hex(0x3A445C), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(ui_debug_screen_btn_valve_close, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_debug_screen_label_valve_close = lv_label_create(ui_debug_screen_btn_valve_close);
+    lv_obj_set_width(ui_debug_screen_label_valve_close, LV_SIZE_CONTENT);
+    lv_obj_set_height(ui_debug_screen_label_valve_close, LV_SIZE_CONTENT);
+    lv_obj_set_align(ui_debug_screen_label_valve_close, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_debug_screen_label_valve_close, "CLOSE");
+    lv_obj_set_style_text_font(ui_debug_screen_label_valve_close, &ui_font_Small_Font, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_debug_screen_btn_valve_zero_open = lv_button_create(ui_debug_screen_valve_container);
+    lv_obj_set_width(ui_debug_screen_btn_valve_zero_open, 118);
+    lv_obj_set_height(ui_debug_screen_btn_valve_zero_open, 54);
+    lv_obj_set_x(ui_debug_screen_btn_valve_zero_open, -67);
+    lv_obj_set_y(ui_debug_screen_btn_valve_zero_open, 245);
+    lv_obj_set_align(ui_debug_screen_btn_valve_zero_open, LV_ALIGN_TOP_MID);
+    lv_obj_add_flag(ui_debug_screen_btn_valve_zero_open, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_radius(ui_debug_screen_btn_valve_zero_open, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(ui_debug_screen_btn_valve_zero_open, lv_color_hex(0x1D47A5), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(ui_debug_screen_btn_valve_zero_open, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_debug_screen_label_valve_zero_open = lv_label_create(ui_debug_screen_btn_valve_zero_open);
+    lv_obj_set_width(ui_debug_screen_label_valve_zero_open, LV_SIZE_CONTENT);
+    lv_obj_set_height(ui_debug_screen_label_valve_zero_open, LV_SIZE_CONTENT);
+    lv_obj_set_align(ui_debug_screen_label_valve_zero_open, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_debug_screen_label_valve_zero_open, "SET 0\nOPEN");
+    lv_obj_set_style_text_align(ui_debug_screen_label_valve_zero_open, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_debug_screen_label_valve_zero_open, &ui_font_Small_Font, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_debug_screen_btn_valve_zero_closed = lv_button_create(ui_debug_screen_valve_container);
+    lv_obj_set_width(ui_debug_screen_btn_valve_zero_closed, 118);
+    lv_obj_set_height(ui_debug_screen_btn_valve_zero_closed, 54);
+    lv_obj_set_x(ui_debug_screen_btn_valve_zero_closed, 67);
+    lv_obj_set_y(ui_debug_screen_btn_valve_zero_closed, 245);
+    lv_obj_set_align(ui_debug_screen_btn_valve_zero_closed, LV_ALIGN_TOP_MID);
+    lv_obj_add_flag(ui_debug_screen_btn_valve_zero_closed, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_radius(ui_debug_screen_btn_valve_zero_closed, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(ui_debug_screen_btn_valve_zero_closed, lv_color_hex(0x1D47A5), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(ui_debug_screen_btn_valve_zero_closed, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_debug_screen_label_valve_zero_closed = lv_label_create(ui_debug_screen_btn_valve_zero_closed);
+    lv_obj_set_width(ui_debug_screen_label_valve_zero_closed, LV_SIZE_CONTENT);
+    lv_obj_set_height(ui_debug_screen_label_valve_zero_closed, LV_SIZE_CONTENT);
+    lv_obj_set_align(ui_debug_screen_label_valve_zero_closed, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_debug_screen_label_valve_zero_closed, "SET 0\nCLOSED");
+    lv_obj_set_style_text_align(ui_debug_screen_label_valve_zero_closed, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_debug_screen_label_valve_zero_closed, &ui_font_Small_Font, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     lv_obj_add_event_cb(ui_debug_btn_menu_debug, ui_event_btn_menu_debug, LV_EVENT_ALL, NULL);
 
@@ -266,8 +361,17 @@ void ui_debug_screen_screen_destroy(void)
     ui_debug_screen_container_1 = NULL;
     ui_debug_screen_label_1 = NULL;
     ui_debug_screen_textarea_1 = NULL;
-    ui_debug_screen_container_2 = NULL;
-    ui_debug_screen_label_2 = NULL;
-    ui_debug_screen_textarea_2 = NULL;
+    ui_debug_screen_valve_container = NULL;
+    ui_debug_screen_label_valve_title = NULL;
+    ui_debug_screen_label_valve_status = NULL;
+    ui_debug_screen_label_valve_position = NULL;
+    ui_debug_screen_btn_valve_open = NULL;
+    ui_debug_screen_label_valve_open = NULL;
+    ui_debug_screen_btn_valve_close = NULL;
+    ui_debug_screen_label_valve_close = NULL;
+    ui_debug_screen_btn_valve_zero_open = NULL;
+    ui_debug_screen_label_valve_zero_open = NULL;
+    ui_debug_screen_btn_valve_zero_closed = NULL;
+    ui_debug_screen_label_valve_zero_closed = NULL;
 
 }

@@ -695,7 +695,7 @@ void ui_aux_screen_screen_init(void)
     lv_obj_set_x(ui_aux_screen_label_input_9, 0);
     lv_obj_set_y(ui_aux_screen_label_input_9, 8);
     lv_obj_set_align(ui_aux_screen_label_input_9, LV_ALIGN_TOP_MID);
-    lv_label_set_text(ui_aux_screen_label_input_9, "--- ---");
+    lv_label_set_text(ui_aux_screen_label_input_9, "P4 CPU TEMP");
     lv_obj_set_style_text_color(ui_aux_screen_label_input_9, lv_color_hex(0x9098AA), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_aux_screen_label_input_9, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_aux_screen_label_input_9, &ui_font_Small_Font, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -706,7 +706,7 @@ void ui_aux_screen_screen_init(void)
     lv_obj_set_x(ui_aux_screen_label_input_9_value, 3);
     lv_obj_set_y(ui_aux_screen_label_input_9_value, 12);
     lv_obj_set_align(ui_aux_screen_label_input_9_value, LV_ALIGN_LEFT_MID);
-    lv_label_set_text(ui_aux_screen_label_input_9_value, "--- ---");
+    lv_label_set_text(ui_aux_screen_label_input_9_value, "--- °C");
     lv_obj_set_style_text_color(ui_aux_screen_label_input_9_value, lv_color_hex(0x3A72EF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_aux_screen_label_input_9_value, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_align(ui_aux_screen_label_input_9_value, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);

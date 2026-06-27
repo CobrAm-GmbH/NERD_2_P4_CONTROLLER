@@ -30,9 +30,22 @@ extern lv_obj_t * ui_debug_btn_menu_debug;
 extern lv_obj_t * ui_debug_screen_container_1;
 extern lv_obj_t * ui_debug_screen_label_1;
 extern lv_obj_t * ui_debug_screen_textarea_1;
-extern lv_obj_t * ui_debug_screen_container_2;
-extern lv_obj_t * ui_debug_screen_label_2;
-extern lv_obj_t * ui_debug_screen_textarea_2;
+
+extern lv_obj_t * ui_debug_screen_valve_container;
+extern lv_obj_t * ui_debug_screen_label_valve_title;
+extern lv_obj_t * ui_debug_screen_label_valve_status;
+extern lv_obj_t * ui_debug_screen_label_valve_position;
+
+extern lv_obj_t * ui_debug_screen_btn_valve_open;
+extern lv_obj_t * ui_debug_screen_label_valve_open;
+extern lv_obj_t * ui_debug_screen_btn_valve_close;
+extern lv_obj_t * ui_debug_screen_label_valve_close;
+
+extern lv_obj_t * ui_debug_screen_btn_valve_zero_open;
+extern lv_obj_t * ui_debug_screen_label_valve_zero_open;
+extern lv_obj_t * ui_debug_screen_btn_valve_zero_closed;
+extern lv_obj_t * ui_debug_screen_label_valve_zero_closed;
+
 // CUSTOM VARIABLES
 
 #ifdef __cplusplus
@@ -40,4 +53,3 @@ extern lv_obj_t * ui_debug_screen_textarea_2;
 #endif
 
 #endif
-

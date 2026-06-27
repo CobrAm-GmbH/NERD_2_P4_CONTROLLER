@@ -1,0 +1,7 @@
+P4 Controller        192.168.0.80
+Sensor Node S3       192.168.0.81
+Valve Node S3        192.168.0.82
+AUX/Template S3      192.168.0.83 - 84....89
+M31 I/O Module       192.168.0.90
+Gateway              192.168.0.1
+Subnet               255.255.255.0
