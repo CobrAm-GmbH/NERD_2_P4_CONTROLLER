@@ -2,6 +2,7 @@
 #include "ui.h"
 #include "ui_helpers.h"
 
+
 static void nav_home(lv_event_t * e) {
     if(lv_event_get_code(e) == LV_EVENT_CLICKED)
         _ui_screen_change(&ui_splash_screen, LV_SCR_LOAD_ANIM_FADE_ON, 200, 0, &ui_splash_screen_screen_init);
@@ -53,9 +54,12 @@ static void add_menu(lv_obj_t *home, lv_obj_t *main, lv_obj_t *settings, lv_obj_
 
 void ui_nav_init_all(void)
 {
-    add_menu(ui_splash_btn_menu_home, ui_splash_btn_menu_main, ui_splash_btn_menu_settings,
+	
+    
+	add_menu(ui_splash_btn_menu_home, ui_splash_btn_menu_main, ui_splash_btn_menu_settings,
              ui_splash_btn_menu_autom, ui_splash_btn_menu_log, ui_splash_btn_menu_aux,
              ui_splash_btn_menu_debug);
+			 
 
     add_menu(ui_main_btn_menu_home, ui_main_btn_menu_main, ui_main_btn_menu_settings,
              ui_main_btn_menu_autom, ui_main_btn_menu_log, ui_main_btn_menu_aux,

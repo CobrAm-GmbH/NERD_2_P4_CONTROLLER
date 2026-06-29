@@ -1,13 +1,16 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+
 #include "nvs_flash.h"
 #include "nvs.h"
+
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_check.h"
 #include "esp_memory_utils.h"
 
 #include "lvgl.h"
+
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
 #include "bsp_board_extra.h"
@@ -15,6 +18,9 @@
 #include "ui.h"
 
 #include "ethernet_manager.h"
+#include "nerd_sensor_client.h"
+
+
 
 void app_main(void)
 {
@@ -29,17 +35,36 @@ void app_main(void)
         },
     };
 
+    /*
+     * Display DSI, touch, LVGL task e relativo mutex.
+     */
     bsp_display_start_with_config(&cfg);
     bsp_display_backlight_on();
-	ethernet_manager_start();
 
+    /*
+     * Ethernet nativa P4 con IP statico.
+     */
+    ethernet_manager_start();
+
+    /*
+     * Creazione UI sotto lock LVGL.
+     */
     bsp_display_lock(-1);
 
     ui_init();
+	
+
 
     bsp_display_unlock();
+	
+	
 
-    while (1) {
+    /*
+     * Polling HTTP del Sensor Node.
+     */
+    nerd_sensor_client_start();
+
+    while(true) {
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

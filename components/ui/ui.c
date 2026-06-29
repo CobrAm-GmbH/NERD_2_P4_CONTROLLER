@@ -6,6 +6,7 @@
 #include "ui_nav.h"
 #include "ui_logic.h"
 
+
 ///////////////////// VARIABLES ////////////////////
 lv_anim_t * OpaOn_Animation(lv_obj_t * TargetObject, int delay);
 lv_anim_t * OpaOff_Animation(lv_obj_t * TargetObject, int delay);
@@ -178,21 +179,28 @@ lv_anim_t * ScreenOut_Animation(lv_obj_t * TargetObject, int delay)
 void ui_init(void)
 {
     lv_disp_t * dispp = lv_display_get_default();
-    lv_theme_t * theme = lv_theme_default_init(dispp, lv_palette_main(LV_PALETTE_BLUE), lv_palette_main(LV_PALETTE_RED),
-                                               false, LV_FONT_DEFAULT);
+    lv_theme_t * theme = lv_theme_default_init(
+        dispp,
+        lv_palette_main(LV_PALETTE_BLUE),
+        lv_palette_main(LV_PALETTE_RED),
+        false,
+        LV_FONT_DEFAULT
+    );
     lv_disp_set_theme(dispp, theme);
 
-    // Initial screen
-        ui_splash_screen_screen_init();
-        ui_main_screen_screen_init();
-        ui_settings_screen_screen_init();
-        ui_autom_screen_screen_init();
-        ui_log_screen_screen_init();
-        ui_aux_screen_screen_init();
-        ui_debug_screen_screen_init();
+    ui_splash_screen_screen_init();
+    ui_main_screen_screen_init();
+    ui_settings_screen_screen_init();
+    ui_autom_screen_screen_init();
+    ui_log_screen_screen_init();
+    ui_aux_screen_screen_init();
+    ui_debug_screen_screen_init();
+
     ui_nav_init_all();
-ui_logic_init();
+    ui_logic_init();
+
     ui____initial_actions0 = lv_obj_create(NULL);
+
     lv_disp_load_scr(ui_splash_screen);
 }
 

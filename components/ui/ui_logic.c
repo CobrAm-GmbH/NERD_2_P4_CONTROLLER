@@ -28,6 +28,9 @@ static bool input_pressure_valid = false;
 static int input_tds_ppm = 0;
 static bool input_tds_valid = false;
 
+static float input_flow_hz = 0.0f;
+static bool input_flow_hz_valid = false;
+
 static float input_flow_lph = 0.0f;
 static bool input_flow_valid = false;
 
@@ -81,6 +84,26 @@ static bool machine_outputs[DO_COUNT] = { false };
 #define SETTINGS_FLOW_FINE_MAX_INDEX    6
 #define SETTINGS_FLOW_SENSOR_MAX_INDEX  2
 #define SETTINGS_STEP_SPEED_MAX_INDEX   2
+/*
+ * Fattori Hz -> litri/ora ricavati da test reali a 180 l/h.
+ *
+ * Sensor A: 312 Hz -> 180 l/h
+ * Sensor B:  20 Hz -> 180 l/h
+ * Sensor C:  40 Hz -> 180 l/h
+ */
+#define FLOW_FACTOR_SENSOR_A  0.577f
+#define FLOW_FACTOR_SENSOR_B  9.0f
+#define FLOW_FACTOR_SENSOR_C  4.5f
+
+static const float flow_fine_tuning_factors[] = {
+    0.85f,  // -15%
+    0.90f,  // -10%
+    0.95f,  //  -5%
+    1.00f,  //   0%
+    1.05f,  //  +5%
+    1.10f,  // +10%
+    1.15f   // +15%
+};
 
 static int clamp_int(int value, int min, int max)
 {
@@ -91,6 +114,35 @@ static int clamp_int(int value, int min, int max)
         return max;
 
     return value;
+}
+
+
+static float get_saved_flow_sensor_factor(void)
+{
+    switch(settings_flow_sensor_saved_index) {
+        case 0:
+            return FLOW_FACTOR_SENSOR_A;
+
+        case 1:
+            return FLOW_FACTOR_SENSOR_B;
+
+        case 2:
+            return FLOW_FACTOR_SENSOR_C;
+
+        default:
+            return FLOW_FACTOR_SENSOR_A;
+    }
+}
+
+static float get_saved_flow_fine_tuning_factor(void)
+{
+    int index = clamp_int(
+        settings_flow_fine_saved_index,
+        0,
+        SETTINGS_FLOW_FINE_MAX_INDEX
+    );
+
+    return flow_fine_tuning_factors[index];
 }
 
 static void save_settings_to_nvs(void);
@@ -549,6 +601,17 @@ static void update_pressure_input(float pressure_bar, bool valid)
     }
 }
 
+void ui_logic_set_pressure(float bar, bool valid)
+{
+    if(bar < 0.0f)
+        bar = 0.0f;
+
+    if(bar > 100.0f)
+        bar = 100.0f;
+
+    update_pressure_input(bar, valid);
+}
+
 static void update_tds_input(int tds_ppm, bool valid)
 {
     input_tds_ppm = tds_ppm;
@@ -590,6 +653,17 @@ static void update_tds_input(int tds_ppm, bool valid)
     }
 }
 
+void ui_logic_set_tds(int ppm, bool valid)
+{
+    if(ppm < 0)
+        ppm = 0;
+
+    if(ppm > 999)
+        ppm = 999;
+
+    update_tds_input(ppm, valid);
+}
+
 static void update_flow_input(float flow_lph, bool valid)
 {
     input_flow_lph = flow_lph;
@@ -613,6 +687,33 @@ static void update_flow_input(float flow_lph, bool valid)
 
     if(ui_main_screen_label_lph_gauge_gpd)
         lv_label_set_text(ui_main_screen_label_lph_gauge_gpd, gpd_buf);
+}
+
+void ui_logic_set_flow_hz(float hz, bool valid)
+{
+    input_flow_hz = hz;
+    input_flow_hz_valid = valid;
+
+    if(!valid) {
+        update_flow_input(0.0f, false);
+        return;
+    }
+
+    if(hz < 0.0f)
+        hz = 0.0f;
+
+    float sensor_factor =
+        get_saved_flow_sensor_factor();
+
+    float fine_tuning_factor =
+        get_saved_flow_fine_tuning_factor();
+
+    float flow_lph =
+        hz *
+        sensor_factor *
+        fine_tuning_factor;
+
+    update_flow_input(flow_lph, true);
 }
 
 static void update_aux_temperature_labels(void)
@@ -712,6 +813,11 @@ static void settings_save_event(lv_event_t * e)
     settings_step_speed_saved_index = settings_step_speed_runtime_index;
 
     save_settings_to_nvs();
+	
+	ui_logic_set_flow_hz(
+    input_flow_hz,
+    input_flow_hz_valid
+);
 
     printf("Settings saved: flush=%d fine=%d sensor=%d speed=%d\n",
            settings_flush_saved_index,
@@ -906,8 +1012,12 @@ static void stop_flushing_countdown(void)
     update_settings_flushing_ttg();
 }
 
+
+
+
 void ui_logic_init(void)
 {
+
     // Persistent settings
     esp_err_t nvs_err = nvs_flash_init();
     if(nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -934,14 +1044,14 @@ void ui_logic_init(void)
     update_machine_outputs();
 
     // Temporary simulated values. Replace with real LAN/Modbus values later.
-    // update_pressure_input(0.0f, false);
-    update_pressure_input(55.4f, true);
+    update_pressure_input(0.0f, false);
+    // update_pressure_input(55.4f, true);
 
-    // update_tds_input(0, false);
-    update_tds_input(154, true);
+    update_tds_input(0, false);
+    // update_tds_input(154, true);
 
-    // update_flow_input(0.0f, false);
-    update_flow_input(100.0f, true);
+    update_flow_input(0.0f, false);
+    // update_flow_input(100.0f, true);
 
 	
 	init_p4_cpu_temperature_sensor();
@@ -952,6 +1062,7 @@ void ui_logic_init(void)
 	lv_timer_create(p4_cpu_temperature_timer_cb, 5000, NULL);
 	
     update_debug_screen_text();
+	
 
     // Global buttons
     if(ui_main_btn_tank_test) lv_obj_add_event_cb(ui_main_btn_tank_test, tank_test_event, LV_EVENT_CLICKED, NULL);
