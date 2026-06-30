@@ -86,6 +86,26 @@ static lv_timer_t * auto_stop_visual_timer = NULL;
 static int auto_stop_visual_countdown_seconds = 0;
 static int auto_stop_visual_phase_seconds = 0;
 
+/*
+ * Overpressure protection.
+ *
+ * Trigger condition: valid pressure strictly greater than 65.0 bar.
+ * Both pumps are switched OFF immediately.
+ * Valve homing is then simulated for now; later this will wait for S3.
+ */
+#define OVERPRESSURE_LIMIT_BAR 65.0f
+
+typedef enum
+{
+    OVERPRESSURE_IDLE = 0,
+    OVERPRESSURE_HOMING,
+    OVERPRESSURE_COMPLETE
+} overpressure_state_t;
+
+static overpressure_state_t overpressure_state = OVERPRESSURE_IDLE;
+static lv_timer_t * overpressure_timer = NULL;
+static int overpressure_phase_seconds = 0;
+
 
 
 /*
@@ -247,8 +267,12 @@ static void update_flushing_cycle_state(void)
     }
 }
 
+static void auto_stop_visual_set_label(const char * text);
 static bool auto_stop_visual_is_active(void);
 static void auto_stop_visual_emergency_abort(void);
+
+static bool overpressure_is_active(void);
+static void overpressure_trigger(void);
 
 static void update_water_labels(void)
 {
@@ -280,6 +304,16 @@ static void feed_pump_event(lv_event_t * e)
      * both pumps are switched OFF immediately and the normal sequence
      * is aborted. ON requests are ignored while AUTO STOP is active.
      */
+    if(overpressure_is_active()) {
+        printf("FEED PUMP command ignored - overpressure homing active\n");
+        return;
+    }
+
+    if(overpressure_is_active()) {
+        printf("HP PUMP command ignored - overpressure homing active\n");
+        return;
+    }
+
     if(auto_stop_visual_is_active()) {
         if(!requested_on)
             auto_stop_visual_emergency_abort();
@@ -695,6 +729,12 @@ static void update_pressure_input(float pressure_bar, bool valid)
 {
     input_pressure_bar = pressure_bar;
     input_pressure_valid = valid;
+
+    if(input_pressure_valid &&
+       input_pressure_bar > OVERPRESSURE_LIMIT_BAR &&
+       !overpressure_is_active()) {
+        overpressure_trigger();
+    }
 
     if(ui_main_screen_label_bar_gauge_bar) {
         static char bar_buf[24];
@@ -1132,6 +1172,120 @@ static void stop_flushing_countdown(void)
 
 
 
+static bool overpressure_is_active(void)
+{
+    return overpressure_state != OVERPRESSURE_IDLE;
+}
+
+static void overpressure_reset(void)
+{
+    if(overpressure_timer) {
+        lv_timer_del(overpressure_timer);
+        overpressure_timer = NULL;
+    }
+
+    overpressure_state = OVERPRESSURE_IDLE;
+    overpressure_phase_seconds = 0;
+
+    /*
+     * Pumps remain OFF.
+     * After homing completes, a new start requires a fresh manual command.
+     */
+    set_checked(ui_main_screen_btn_auto_stop, false);
+    auto_stop_visual_set_label("AUTO\nSTOP");
+}
+
+static void overpressure_timer_cb(lv_timer_t * timer)
+{
+    (void) timer;
+
+    switch(overpressure_state) {
+        case OVERPRESSURE_HOMING:
+            /*
+             * Temporary simulation only.
+             * Later this state will wait for the S3
+             * VALVE FULLY OPEN confirmation.
+             */
+            if(overpressure_phase_seconds > 0)
+                overpressure_phase_seconds--;
+
+            if(overpressure_phase_seconds <= 0) {
+                overpressure_state = OVERPRESSURE_COMPLETE;
+                overpressure_phase_seconds = 2;
+                auto_stop_visual_set_label("COMPLETE");
+
+                printf("OVERPRESSURE: simulated valve homing complete\n");
+            }
+            break;
+
+        case OVERPRESSURE_COMPLETE:
+            if(overpressure_phase_seconds > 0)
+                overpressure_phase_seconds--;
+
+            if(overpressure_phase_seconds <= 0)
+                overpressure_reset();
+            break;
+
+        case OVERPRESSURE_IDLE:
+        default:
+            overpressure_reset();
+            break;
+    }
+}
+
+static void overpressure_trigger(void)
+{
+    if(overpressure_is_active())
+        return;
+
+    /*
+     * Overpressure has priority over AUTO STOP.
+     * Stop any AUTO STOP timer/sequence before proceeding.
+     */
+    if(auto_stop_visual_timer) {
+        lv_timer_del(auto_stop_visual_timer);
+        auto_stop_visual_timer = NULL;
+    }
+
+    auto_stop_visual_state = AUTO_STOP_VISUAL_IDLE;
+    auto_stop_visual_countdown_seconds = 0;
+    auto_stop_visual_phase_seconds = 0;
+
+    /*
+     * Immediate physical shutdown:
+     * HP Pump OFF first, then Feed Pump OFF.
+     */
+    hp_pump_on = false;
+    feed_pump_on = false;
+
+    update_hp_pump_state();
+    update_feed_pump_state();
+    update_machine_outputs();
+
+    nerd_m31_write_coil(M31_COIL_HP_PUMP, false);
+    nerd_m31_write_coil(M31_COIL_FEED_PUMP, false);
+
+    overpressure_state = OVERPRESSURE_HOMING;
+    overpressure_phase_seconds = 2;
+
+    set_checked(ui_main_screen_btn_auto_stop, true);
+    auto_stop_visual_set_label("OVERPRESSURE");
+
+    if(overpressure_timer) {
+        lv_timer_del(overpressure_timer);
+        overpressure_timer = NULL;
+    }
+
+    overpressure_timer =
+        lv_timer_create(overpressure_timer_cb, 1000, NULL);
+
+    printf(
+        "OVERPRESSURE: %.2f bar > %.2f bar - both pumps OFF immediately\n",
+        input_pressure_bar,
+        OVERPRESSURE_LIMIT_BAR
+    );
+}
+
 static void auto_stop_visual_set_label(const char * text)
 {
     if(ui_main_screen_label_auto_stop)
@@ -1316,6 +1470,13 @@ static void auto_stop_visual_timer_cb(lv_timer_t * timer)
 static void auto_stop_visual_event(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_CLICKED)
+        return;
+
+    /*
+     * No AUTO STOP or pump restart command is accepted while
+     * overpressure homing is active.
+     */
+    if(overpressure_is_active())
         return;
 
     /*
