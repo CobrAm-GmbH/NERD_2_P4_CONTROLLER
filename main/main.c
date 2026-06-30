@@ -19,6 +19,7 @@
 
 #include "ethernet_manager.h"
 #include "nerd_sensor_client.h"
+#include "nerd_m31.h"
 
 
 
@@ -45,6 +46,11 @@ void app_main(void)
      * Ethernet nativa P4 con IP statico.
      */
     ethernet_manager_start();
+
+    /*
+     * Client Modbus TCP asincrono per il modulo M31.
+     */
+    nerd_m31_start();
 
     /*
      * Creazione UI sotto lock LVGL.

@@ -25,6 +25,7 @@ idf_component_register(
         esp_eth
         esp_http_client
         json
+        nerd_io
 )
 
 idf_component_get_property(LVGL_LIB lvgl__lvgl COMPONENT_LIB)

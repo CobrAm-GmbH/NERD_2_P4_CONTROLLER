@@ -72,6 +72,8 @@ extern lv_obj_t * ui_main_screen_label_valve_position_turns;
 extern lv_obj_t * ui_main_screen_label_valve_position_total;
 extern lv_obj_t * ui_main_screen_image_valve_closing;
 extern lv_obj_t * ui_main_screen_image_valve_opening;
+extern lv_obj_t * ui_main_screen_btn_auto_stop;
+extern lv_obj_t * ui_main_screen_label_auto_stop;
 extern lv_obj_t * ui_main_screen_switch_auto_pressure;
 extern lv_obj_t * ui_main_screen_label_auto_pressure;
 // CUSTOM VARIABLES

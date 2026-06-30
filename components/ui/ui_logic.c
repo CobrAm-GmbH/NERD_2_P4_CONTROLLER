@@ -4,6 +4,7 @@
 #include "driver/temperature_sensor.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "nerd_m31.h"
 
 
 static bool feed_pump_on = false;
@@ -63,6 +64,42 @@ static int settings_step_speed_saved_index = 0;
 static lv_timer_t * flushing_timer = NULL;
 static int flushing_remaining_seconds = 0;
 
+/*
+ * AUTO STOP - Stage 2
+ *
+ * Visual state machine only.
+ * No pump output and no valve command is executed in this stage.
+ */
+typedef enum
+{
+    AUTO_STOP_VISUAL_IDLE = 0,
+    AUTO_STOP_VISUAL_HOMING,
+    AUTO_STOP_VISUAL_COUNTDOWN,
+    AUTO_STOP_VISUAL_HP_OFF,
+    AUTO_STOP_VISUAL_COMPLETE,
+    AUTO_STOP_VISUAL_ABORT_DELAY,
+    AUTO_STOP_VISUAL_ABORT_HOMING
+} auto_stop_visual_state_t;
+
+static auto_stop_visual_state_t auto_stop_visual_state = AUTO_STOP_VISUAL_IDLE;
+static lv_timer_t * auto_stop_visual_timer = NULL;
+static int auto_stop_visual_countdown_seconds = 0;
+static int auto_stop_visual_phase_seconds = 0;
+
+
+
+/*
+ * M31 base digital-output map.
+ *
+ * DO1 / coil 0 = Feed Pump
+ * DO2 / coil 1 = HP Pump
+ * DO3 / coil 2 = Auxiliary 1
+ * DO4 / coil 3 = Auxiliary 2
+ */
+#define M31_COIL_FEED_PUMP   0
+#define M31_COIL_HP_PUMP     1
+#define M31_COIL_AUX_1       2
+#define M31_COIL_AUX_2       3
 
 typedef enum
 {
@@ -210,6 +247,9 @@ static void update_flushing_cycle_state(void)
     }
 }
 
+static bool auto_stop_visual_is_active(void);
+static void auto_stop_visual_emergency_abort(void);
+
 static void update_water_labels(void)
 {
     const char * txt = water_to_tank ? "WATER\nTO TANK" : "WATER\nTO TEST";
@@ -233,9 +273,50 @@ static void feed_pump_event(lv_event_t * e)
     if(lv_event_get_code(e) != LV_EVENT_CLICKED)
         return;
 
-    feed_pump_on = !feed_pump_on;
+    bool requested_on = !feed_pump_on;
+
+    /*
+     * During AUTO STOP, an OFF request is an emergency override:
+     * both pumps are switched OFF immediately and the normal sequence
+     * is aborted. ON requests are ignored while AUTO STOP is active.
+     */
+    if(auto_stop_visual_is_active()) {
+        if(!requested_on)
+            auto_stop_visual_emergency_abort();
+
+        return;
+    }
+
+    /*
+     * Feed Pump may always be started or stopped manually.
+     *
+     * If Feed Pump is stopped while HP Pump is running,
+     * HP Pump is stopped immediately as a logical safety interlock.
+     */
+    if(!requested_on && hp_pump_on) {
+        hp_pump_on = false;
+        update_hp_pump_state();
+
+        /*
+         * Safety order: HP Pump OFF first, then Feed Pump OFF.
+         */
+        nerd_m31_write_coil(M31_COIL_HP_PUMP, false);
+
+        printf("HP PUMP: OFF because FEED PUMP was stopped\n");
+    }
+
+    feed_pump_on = requested_on;
+
     update_feed_pump_state();
     update_machine_outputs();
+
+    nerd_m31_write_coil(M31_COIL_FEED_PUMP, feed_pump_on);
+
+    printf(
+        "FEED PUMP: %s | HP PUMP: %s\n",
+        feed_pump_on ? "ON" : "OFF",
+        hp_pump_on ? "ON" : "OFF"
+    );
 }
 
 static void hp_pump_event(lv_event_t * e)
@@ -243,9 +324,46 @@ static void hp_pump_event(lv_event_t * e)
     if(lv_event_get_code(e) != LV_EVENT_CLICKED)
         return;
 
-    hp_pump_on = !hp_pump_on;
+    bool requested_on = !hp_pump_on;
+
+    /*
+     * During AUTO STOP, an OFF request is an emergency override.
+     * ON requests are ignored until the sequence has finished.
+     */
+    if(auto_stop_visual_is_active()) {
+        if(!requested_on)
+            auto_stop_visual_emergency_abort();
+
+        return;
+    }
+
+    /*
+     * HP Pump start permissive:
+     * it may start only when Feed Pump is already ON.
+     *
+     * HP Pump may always be stopped manually.
+     */
+    if(requested_on && !feed_pump_on) {
+        hp_pump_on = false;
+        update_hp_pump_state();
+        update_machine_outputs();
+
+        printf("HP PUMP: START REJECTED - FEED PUMP is OFF\n");
+        return;
+    }
+
+    hp_pump_on = requested_on;
+
     update_hp_pump_state();
     update_machine_outputs();
+
+    nerd_m31_write_coil(M31_COIL_HP_PUMP, hp_pump_on);
+
+    printf(
+        "HP PUMP: %s | FEED PUMP: %s\n",
+        hp_pump_on ? "ON" : "OFF",
+        feed_pump_on ? "ON" : "OFF"
+    );
 }
 
 static void start_flushing_countdown(void);
@@ -1014,6 +1132,216 @@ static void stop_flushing_countdown(void)
 
 
 
+static void auto_stop_visual_set_label(const char * text)
+{
+    if(ui_main_screen_label_auto_stop)
+        lv_label_set_text(ui_main_screen_label_auto_stop, text);
+}
+
+static bool auto_stop_visual_is_active(void)
+{
+    return auto_stop_visual_state != AUTO_STOP_VISUAL_IDLE;
+}
+
+static void auto_stop_visual_reset(void)
+{
+    if(auto_stop_visual_timer) {
+        lv_timer_del(auto_stop_visual_timer);
+        auto_stop_visual_timer = NULL;
+    }
+
+    auto_stop_visual_state = AUTO_STOP_VISUAL_IDLE;
+    auto_stop_visual_countdown_seconds = 0;
+    auto_stop_visual_phase_seconds = 0;
+
+    set_checked(ui_main_screen_btn_auto_stop, false);
+    auto_stop_visual_set_label("AUTO\nSTOP");
+}
+
+static void auto_stop_visual_emergency_abort(void)
+{
+    if(!auto_stop_visual_is_active())
+        return;
+
+    /*
+     * Highest-priority manual override:
+     * HP Pump OFF first, then Feed Pump OFF.
+     */
+    hp_pump_on = false;
+    feed_pump_on = false;
+
+    update_hp_pump_state();
+    update_feed_pump_state();
+    update_machine_outputs();
+
+    nerd_m31_write_coil(M31_COIL_HP_PUMP, false);
+    nerd_m31_write_coil(M31_COIL_FEED_PUMP, false);
+
+    auto_stop_visual_state = AUTO_STOP_VISUAL_ABORT_DELAY;
+    auto_stop_visual_phase_seconds = 2;
+
+    set_checked(ui_main_screen_btn_auto_stop, true);
+    auto_stop_visual_set_label("EMERGENCY\nSTOP");
+
+    printf("AUTO STOP: emergency manual abort - both pumps OFF\n");
+}
+
+static void auto_stop_visual_timer_cb(lv_timer_t * timer)
+{
+    (void) timer;
+
+    static char countdown_buf[24];
+
+    switch(auto_stop_visual_state) {
+        case AUTO_STOP_VISUAL_HOMING:
+            /*
+             * Temporary simulation only.
+             * Later this transition will wait for the S3
+             * VALVE FULLY OPEN confirmation.
+             */
+            if(auto_stop_visual_phase_seconds > 0)
+                auto_stop_visual_phase_seconds--;
+
+            if(auto_stop_visual_phase_seconds <= 0) {
+                auto_stop_visual_state = AUTO_STOP_VISUAL_COUNTDOWN;
+                auto_stop_visual_countdown_seconds = 30;
+
+                snprintf(
+                    countdown_buf,
+                    sizeof(countdown_buf),
+                    "STOP IN\n%d s",
+                    auto_stop_visual_countdown_seconds
+                );
+
+                auto_stop_visual_set_label(countdown_buf);
+            }
+            break;
+
+        case AUTO_STOP_VISUAL_COUNTDOWN:
+            if(auto_stop_visual_countdown_seconds > 0)
+                auto_stop_visual_countdown_seconds--;
+
+            if(auto_stop_visual_countdown_seconds > 0) {
+                snprintf(
+                    countdown_buf,
+                    sizeof(countdown_buf),
+                    "STOP IN\n%d s",
+                    auto_stop_visual_countdown_seconds
+                );
+
+                auto_stop_visual_set_label(countdown_buf);
+            } else {
+                /*
+                 * Normal AUTO STOP:
+                 * HP Pump OFF first.
+                 */
+                hp_pump_on = false;
+                update_hp_pump_state();
+                update_machine_outputs();
+                nerd_m31_write_coil(M31_COIL_HP_PUMP, false);
+
+                auto_stop_visual_state = AUTO_STOP_VISUAL_HP_OFF;
+                auto_stop_visual_phase_seconds = 2;
+                auto_stop_visual_set_label("HP PUMP\nOFF");
+
+                printf("AUTO STOP: HP Pump OFF\n");
+            }
+            break;
+
+        case AUTO_STOP_VISUAL_HP_OFF:
+            if(auto_stop_visual_phase_seconds > 0)
+                auto_stop_visual_phase_seconds--;
+
+            if(auto_stop_visual_phase_seconds <= 0) {
+                /*
+                 * Two seconds after HP Pump OFF:
+                 * Feed Pump OFF and sequence complete.
+                 */
+                feed_pump_on = false;
+                update_feed_pump_state();
+                update_machine_outputs();
+                nerd_m31_write_coil(M31_COIL_FEED_PUMP, false);
+
+                auto_stop_visual_state = AUTO_STOP_VISUAL_COMPLETE;
+                auto_stop_visual_phase_seconds = 2;
+                auto_stop_visual_set_label("COMPLETE");
+
+                printf("AUTO STOP: Feed Pump OFF - sequence complete\n");
+            }
+            break;
+
+        case AUTO_STOP_VISUAL_ABORT_DELAY:
+            /*
+             * Both pumps are already OFF.
+             * Wait approximately two seconds before simulated homing.
+             */
+            if(auto_stop_visual_phase_seconds > 0)
+                auto_stop_visual_phase_seconds--;
+
+            if(auto_stop_visual_phase_seconds <= 0) {
+                auto_stop_visual_state = AUTO_STOP_VISUAL_ABORT_HOMING;
+                auto_stop_visual_phase_seconds = 2;
+                auto_stop_visual_set_label("HOMING");
+
+                printf("AUTO STOP abort: simulated valve homing\n");
+            }
+            break;
+
+        case AUTO_STOP_VISUAL_ABORT_HOMING:
+            if(auto_stop_visual_phase_seconds > 0)
+                auto_stop_visual_phase_seconds--;
+
+            if(auto_stop_visual_phase_seconds <= 0) {
+                auto_stop_visual_state = AUTO_STOP_VISUAL_COMPLETE;
+                auto_stop_visual_phase_seconds = 2;
+                auto_stop_visual_set_label("COMPLETE");
+            }
+            break;
+
+        case AUTO_STOP_VISUAL_COMPLETE:
+            if(auto_stop_visual_phase_seconds > 0)
+                auto_stop_visual_phase_seconds--;
+
+            if(auto_stop_visual_phase_seconds <= 0)
+                auto_stop_visual_reset();
+            break;
+
+        case AUTO_STOP_VISUAL_IDLE:
+        default:
+            auto_stop_visual_reset();
+            break;
+    }
+}
+
+static void auto_stop_visual_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED)
+        return;
+
+    /*
+     * AUTO STOP cannot be cancelled by pressing AUTO STOP again.
+     */
+    if(auto_stop_visual_is_active())
+        return;
+
+    auto_stop_visual_state = AUTO_STOP_VISUAL_HOMING;
+    auto_stop_visual_phase_seconds = 2;
+
+    set_checked(ui_main_screen_btn_auto_stop, true);
+    auto_stop_visual_set_label("HOMING");
+
+    if(auto_stop_visual_timer) {
+        lv_timer_del(auto_stop_visual_timer);
+        auto_stop_visual_timer = NULL;
+    }
+
+    auto_stop_visual_timer =
+        lv_timer_create(auto_stop_visual_timer_cb, 1000, NULL);
+
+    printf("AUTO STOP: started - simulated valve homing\n");
+}
+
+
 
 void ui_logic_init(void)
 {
@@ -1042,6 +1370,13 @@ void ui_logic_init(void)
     update_auto_pressure_state();
     update_tank_diverting_state();
     update_machine_outputs();
+
+    /*
+     * Safe startup state on the physical M31.
+     * HP Pump is switched OFF before Feed Pump.
+     */
+    nerd_m31_write_coil(M31_COIL_HP_PUMP, false);
+    nerd_m31_write_coil(M31_COIL_FEED_PUMP, false);
 
     // Temporary simulated values. Replace with real LAN/Modbus values later.
     update_pressure_input(0.0f, false);
@@ -1150,6 +1485,15 @@ void ui_logic_init(void)
 
     if(ui_main_screen_glow_4) {
         lv_obj_add_event_cb(ui_main_screen_glow_4, pressure_minus_event, LV_EVENT_CLICKED, NULL);
+    }
+
+    if(ui_main_screen_btn_auto_stop) {
+        lv_obj_add_event_cb(
+            ui_main_screen_btn_auto_stop,
+            auto_stop_visual_event,
+            LV_EVENT_CLICKED,
+            NULL
+        );
     }
 
     if(ui_main_screen_switch_auto_pressure) {

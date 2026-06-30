@@ -50,4 +50,5 @@ idf_component_register(
         lvgl
         esp_driver_tsens
 		nvs_flash
+        nerd_io
 )

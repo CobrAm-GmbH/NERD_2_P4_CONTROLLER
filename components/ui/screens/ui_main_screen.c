@@ -61,6 +61,8 @@ lv_obj_t * ui_main_screen_label_valve_position_turns = NULL;
 lv_obj_t * ui_main_screen_label_valve_position_total = NULL;
 lv_obj_t * ui_main_screen_image_valve_closing = NULL;
 lv_obj_t * ui_main_screen_image_valve_opening = NULL;
+lv_obj_t * ui_main_screen_btn_auto_stop = NULL;
+lv_obj_t * ui_main_screen_label_auto_stop = NULL;
 lv_obj_t * ui_main_screen_switch_auto_pressure = NULL;
 lv_obj_t * ui_main_screen_label_auto_pressure = NULL;
 // event funtions
@@ -771,76 +773,58 @@ void ui_main_screen_screen_init(void)
     lv_obj_set_style_bg_grad_stop(ui_main_screen_panel_divider, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(ui_main_screen_panel_divider, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    ui_main_screen_panel_valve_position = lv_obj_create(ui_main_screen_panel_bar_preset_and_valve);
-    lv_obj_set_width(ui_main_screen_panel_valve_position, lv_pct(50));
-    lv_obj_set_height(ui_main_screen_panel_valve_position, lv_pct(100));
-    lv_obj_set_align(ui_main_screen_panel_valve_position, LV_ALIGN_RIGHT_MID);
-    lv_obj_remove_flag(ui_main_screen_panel_valve_position, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
-    lv_obj_set_style_bg_color(ui_main_screen_panel_valve_position, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(ui_main_screen_panel_valve_position, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_main_stop(ui_main_screen_panel_valve_position, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_grad_stop(ui_main_screen_panel_valve_position, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(ui_main_screen_panel_valve_position, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_left(ui_main_screen_panel_valve_position, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_right(ui_main_screen_panel_valve_position, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_top(ui_main_screen_panel_valve_position, 12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_bottom(ui_main_screen_panel_valve_position, 12, LV_PART_MAIN | LV_STATE_DEFAULT);
-
-    ui_main_screen_label_valve_position_title = lv_label_create(ui_main_screen_panel_valve_position);
-    lv_obj_set_width(ui_main_screen_label_valve_position_title, LV_SIZE_CONTENT);   /// 1
-    lv_obj_set_height(ui_main_screen_label_valve_position_title, LV_SIZE_CONTENT);    /// 1
-    lv_obj_set_align(ui_main_screen_label_valve_position_title, LV_ALIGN_TOP_MID);
-    lv_label_set_text(ui_main_screen_label_valve_position_title, "Valve Position");
-    lv_obj_set_style_text_color(ui_main_screen_label_valve_position_title, lv_color_hex(0x9098AA),
+    /*
+     * AUTO STOP command button.
+     *
+     * First-stage UI only:
+     * - no machine logic is attached yet;
+     * - normal image is OFF;
+     * - while pressed it uses the existing illuminated ON image;
+     * - CHECKED images are already configured for the later state-machine stage,
+     *   when the glow must remain active throughout AUTO STOP.
+     */
+    ui_main_screen_btn_auto_stop = lv_imagebutton_create(ui_main_screen_panel_bar_preset_and_valve);
+    lv_imagebutton_set_src(ui_main_screen_btn_auto_stop, LV_IMAGEBUTTON_STATE_RELEASED,
+                           NULL, &ui_img_btn_main_off_png, NULL);
+    lv_imagebutton_set_src(ui_main_screen_btn_auto_stop, LV_IMAGEBUTTON_STATE_PRESSED,
+                           NULL, &ui_img_btn_main_on_png, NULL);
+    lv_imagebutton_set_src(ui_main_screen_btn_auto_stop, LV_IMAGEBUTTON_STATE_CHECKED_PRESSED,
+                           NULL, &ui_img_btn_main_on_png, NULL);
+    lv_imagebutton_set_src(ui_main_screen_btn_auto_stop, LV_IMAGEBUTTON_STATE_CHECKED_RELEASED,
+                           NULL, &ui_img_btn_main_on_png, NULL);
+    //lv_obj_set_width(ui_main_screen_btn_auto_stop, 100);
+    //lv_obj_set_height(ui_main_screen_btn_auto_stop, 66);
+	lv_obj_set_height(ui_main_screen_btn_auto_stop, 66);
+	lv_obj_set_width(ui_main_screen_btn_auto_stop, LV_SIZE_CONTENT);
+    //lv_obj_set_x(ui_main_screen_btn_auto_stop, 87);
+    //lv_obj_set_y(ui_main_screen_btn_auto_stop, 0);
+    //lv_obj_set_align(ui_main_screen_btn_auto_stop, LV_ALIGN_CENTER);
+	lv_obj_set_align(ui_main_screen_btn_auto_stop, LV_ALIGN_RIGHT_MID);
+	lv_obj_set_x(ui_main_screen_btn_auto_stop, -10);
+	lv_obj_set_y(ui_main_screen_btn_auto_stop, 0);
+    lv_obj_remove_flag(ui_main_screen_btn_auto_stop, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_text_color(ui_main_screen_btn_auto_stop, lv_color_hex(0xABC1ED),
                                 LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_opa(ui_main_screen_label_valve_position_title, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(ui_main_screen_label_valve_position_title, &ui_font_Small_Font,
-                               LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_opa(ui_main_screen_btn_auto_stop, 255,
+                              LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(ui_main_screen_btn_auto_stop, lv_color_hex(0x00B9FF),
+                                LV_PART_MAIN | LV_STATE_CHECKED);
+    lv_obj_set_style_text_opa(ui_main_screen_btn_auto_stop, 255,
+                              LV_PART_MAIN | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(ui_main_screen_btn_auto_stop, lv_color_hex(0x06CEFB),
+                                LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_text_opa(ui_main_screen_btn_auto_stop, 255,
+                              LV_PART_MAIN | LV_STATE_PRESSED);
 
-    ui_main_screen_label_valve_position_turns = lv_label_create(ui_main_screen_panel_valve_position);
-    lv_obj_set_width(ui_main_screen_label_valve_position_turns, LV_SIZE_CONTENT);   /// 1
-    lv_obj_set_height(ui_main_screen_label_valve_position_turns, LV_SIZE_CONTENT);    /// 1
-    lv_obj_set_x(ui_main_screen_label_valve_position_turns, 36);
-    lv_obj_set_y(ui_main_screen_label_valve_position_turns, 11);
-    lv_obj_set_align(ui_main_screen_label_valve_position_turns, LV_ALIGN_LEFT_MID);
-    lv_label_set_text(ui_main_screen_label_valve_position_turns, "3.54");
-    lv_obj_set_style_text_color(ui_main_screen_label_valve_position_turns, lv_color_hex(0xDBE6FF),
+    ui_main_screen_label_auto_stop = lv_label_create(ui_main_screen_btn_auto_stop);
+    lv_obj_set_width(ui_main_screen_label_auto_stop, LV_SIZE_CONTENT);
+    lv_obj_set_height(ui_main_screen_label_auto_stop, LV_SIZE_CONTENT);
+    lv_obj_set_align(ui_main_screen_label_auto_stop, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_main_screen_label_auto_stop, "AUTO\nSTOP");
+    lv_obj_set_style_text_align(ui_main_screen_label_auto_stop, LV_TEXT_ALIGN_CENTER,
                                 LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_opa(ui_main_screen_label_valve_position_turns, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(ui_main_screen_label_valve_position_turns, &lv_font_montserrat_26,
+    lv_obj_set_style_text_font(ui_main_screen_label_auto_stop, &ui_font_Small_Font,
                                LV_PART_MAIN | LV_STATE_DEFAULT);
-
-    ui_main_screen_label_valve_position_total = lv_label_create(ui_main_screen_panel_valve_position);
-    lv_obj_set_width(ui_main_screen_label_valve_position_total, LV_SIZE_CONTENT);   /// 1
-    lv_obj_set_height(ui_main_screen_label_valve_position_total, LV_SIZE_CONTENT);    /// 1
-    lv_obj_set_x(ui_main_screen_label_valve_position_total, 93);
-    lv_obj_set_y(ui_main_screen_label_valve_position_total, 13);
-    lv_obj_set_align(ui_main_screen_label_valve_position_total, LV_ALIGN_LEFT_MID);
-    lv_label_set_text(ui_main_screen_label_valve_position_total, "/ 6.5");
-    lv_obj_set_style_text_color(ui_main_screen_label_valve_position_total, lv_color_hex(0x9098AA),
-                                LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_opa(ui_main_screen_label_valve_position_total, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(ui_main_screen_label_valve_position_total, &ui_font_Small_Font,
-                               LV_PART_MAIN | LV_STATE_DEFAULT);
-
-    ui_main_screen_image_valve_closing = lv_image_create(ui_main_screen_panel_valve_position);
-    lv_image_set_src(ui_main_screen_image_valve_closing, &ui_img_icn_head_png);
-    lv_obj_set_width(ui_main_screen_image_valve_closing, LV_SIZE_CONTENT);   /// 100
-    lv_obj_set_height(ui_main_screen_image_valve_closing, LV_SIZE_CONTENT);    /// 50
-    lv_obj_set_x(ui_main_screen_image_valve_closing, 7);
-    lv_obj_set_y(ui_main_screen_image_valve_closing, 14);
-    lv_obj_set_align(ui_main_screen_image_valve_closing, LV_ALIGN_LEFT_MID);
-    lv_obj_add_flag(ui_main_screen_image_valve_closing, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
-
-    ui_main_screen_image_valve_opening = lv_image_create(ui_main_screen_panel_valve_position);
-    lv_image_set_src(ui_main_screen_image_valve_opening, &ui_img_icn_head_png);
-    lv_obj_set_width(ui_main_screen_image_valve_opening, LV_SIZE_CONTENT);   /// 100
-    lv_obj_set_height(ui_main_screen_image_valve_opening, LV_SIZE_CONTENT);    /// 50
-    lv_obj_set_x(ui_main_screen_image_valve_opening, 143);
-    lv_obj_set_y(ui_main_screen_image_valve_opening, 14);
-    lv_obj_set_align(ui_main_screen_image_valve_opening, LV_ALIGN_LEFT_MID);
-    lv_obj_add_flag(ui_main_screen_image_valve_opening, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
-    lv_image_set_rotation(ui_main_screen_image_valve_opening, 1800);
 
     ui_main_screen_switch_auto_pressure = lv_switch_create(ui_main_screen);
     lv_obj_set_width(ui_main_screen_switch_auto_pressure, 90);
@@ -950,6 +934,8 @@ void ui_main_screen_screen_destroy(void)
     ui_main_screen_label_valve_position_total = NULL;
     ui_main_screen_image_valve_closing = NULL;
     ui_main_screen_image_valve_opening = NULL;
+    ui_main_screen_btn_auto_stop = NULL;
+    ui_main_screen_label_auto_stop = NULL;
     ui_main_screen_switch_auto_pressure = NULL;
     ui_main_screen_label_auto_pressure = NULL;
 
