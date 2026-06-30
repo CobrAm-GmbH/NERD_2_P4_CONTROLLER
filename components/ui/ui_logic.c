@@ -12,11 +12,47 @@ static bool hp_pump_on = false;
 static bool flushing_cycle_on = false;
 static bool water_to_tank = true;
 
+/*
+ * Tank/Test diverting valve mode.
+ *
+ * Default at boot:
+ *   WATER TO TANK -> M31 DO4 / coil 3 OFF
+ *
+ * Button cycle:
+ *   WATER TO TANK -> WATER TO TEST -> AUTO DIVERT -> WATER TO TANK
+ */
+typedef enum
+{
+    DIVERT_MODE_WATER_TO_TANK = 0,
+    DIVERT_MODE_WATER_TO_TEST,
+    DIVERT_MODE_AUTO
+} divert_mode_t;
+
+static divert_mode_t divert_mode = DIVERT_MODE_WATER_TO_TANK;
+static lv_timer_t * divert_blink_timer = NULL;
+static int divert_blink_elapsed_seconds = 0;
+static bool divert_blink_on = false;
+
+#define AUTO_DIVERT_TDS_TO_TANK_PPM  490
+#define AUTO_DIVERT_TDS_TO_TEST_PPM  510
+#define AUTO_DIVERT_SLOW_BLINK_SEC      3
+#define AUTO_DIVERT_FAST_BLINK_SEC      1
+
 static int autom_time_minutes = 0;
 static int autom_liters = 0;
 
 static bool auto_production_on = false;
 static bool start_auto_on = false;
+
+/*
+ * AUTO PRODUCTION monitors production already in progress.
+ * Reaching TIME or LITERS calls the common soft AUTO STOP.
+ */
+static lv_timer_t * auto_production_timer = NULL;
+static int auto_time_remaining_seconds = 0;
+static float auto_liters_produced = 0.0f;
+static bool auto_running_liters_mode = false;
+
 static bool tank_2_selected = false;
 
 static int pressure_preset_bar = 0;
@@ -119,7 +155,7 @@ static int overpressure_phase_seconds = 0;
 #define M31_COIL_FEED_PUMP   0
 #define M31_COIL_HP_PUMP     1
 #define M31_COIL_AUX_1       2
-#define M31_COIL_AUX_2       3
+#define M31_COIL_TANK_TEST_DIVERT  3
 
 typedef enum
 {
@@ -269,27 +305,202 @@ static void update_flushing_cycle_state(void)
 
 static void auto_stop_visual_set_label(const char * text);
 static bool auto_stop_visual_is_active(void);
+static bool auto_stop_start(const char * source);
 static void auto_stop_visual_emergency_abort(void);
+
+static void auto_production_stop_tracking(const char * status_text);
+static void update_auto_production_state(void);
+static void update_start_auto_state(void);
+static void update_autom_target_set_label(void);
 
 static bool overpressure_is_active(void);
 static void overpressure_trigger(void);
 
-static void update_water_labels(void)
+static void update_water_labels(void);
+static void divert_evaluate_auto(void);
+static void divert_stop_blink_timer(void);
+
+static void divert_set_all_labels(const char * text)
 {
-    const char * txt = water_to_tank ? "WATER\nTO TANK" : "WATER\nTO TEST";
-    bool checked = !water_to_tank;
+    if(ui_main_label_tank_test)
+        lv_label_set_text(ui_main_label_tank_test, text);
 
-    if(ui_main_label_tank_test) lv_label_set_text(ui_main_label_tank_test, txt);
-    if(ui_settings_label_tank_test) lv_label_set_text(ui_settings_label_tank_test, txt);
-    if(ui_autom_label_tank_test) lv_label_set_text(ui_autom_label_tank_test, txt);
-    if(ui_log_label_tank_test) lv_label_set_text(ui_log_label_tank_test, txt);
-    if(ui_aux_label_tank_test) lv_label_set_text(ui_aux_label_tank_test, txt);
+    if(ui_settings_label_tank_test)
+        lv_label_set_text(ui_settings_label_tank_test, text);
 
+    if(ui_autom_label_tank_test)
+        lv_label_set_text(ui_autom_label_tank_test, text);
+
+    if(ui_log_label_tank_test)
+        lv_label_set_text(ui_log_label_tank_test, text);
+
+    if(ui_aux_label_tank_test)
+        lv_label_set_text(ui_aux_label_tank_test, text);
+}
+
+static void divert_set_all_checked(bool checked)
+{
     set_checked(ui_main_btn_tank_test, checked);
     set_checked(ui_settings_btn_tank_test, checked);
     set_checked(ui_autom_btn_tank_test, checked);
     set_checked(ui_log_btn_tank_test, checked);
     set_checked(ui_aux_btn_tank_test, checked);
+}
+
+static void divert_apply_output(bool divert_to_test)
+{
+    bool new_water_to_tank = !divert_to_test;
+    bool output_changed = water_to_tank != new_water_to_tank;
+
+    water_to_tank = new_water_to_tank;
+    update_machine_outputs();
+
+    /*
+     * Physical output:
+     * M31 DO4 / coil 3 OFF = WATER TO TANK
+     * M31 DO4 / coil 3 ON  = WATER TO TEST
+     */
+    if(output_changed) {
+        nerd_m31_write_coil(
+            M31_COIL_TANK_TEST_DIVERT,
+            divert_to_test
+        );
+
+        printf(
+            "TANK/TEST DIVERT: %s | DO4 coil 3 -> %s\n",
+            divert_to_test ? "WATER TO TEST" : "WATER TO TANK",
+            divert_to_test ? "ON" : "OFF"
+        );
+    }
+}
+
+static void update_water_labels(void)
+{
+    switch(divert_mode) {
+        case DIVERT_MODE_WATER_TO_TANK:
+            divert_set_all_labels("WATER\nTO TANK");
+            divert_set_all_checked(false);
+            break;
+
+        case DIVERT_MODE_WATER_TO_TEST:
+            divert_set_all_labels("WATER\nTO TEST");
+            divert_set_all_checked(true);
+            break;
+
+        case DIVERT_MODE_AUTO:
+            /*
+             * In AUTO mode the physical route is represented by
+             * water_to_tank, while the glow indicates that AUTO is active.
+             */
+            if(!input_tds_valid) {
+                divert_set_all_labels(
+                    divert_blink_on ? "TDS\nINVALID" : "AUTO\nDIVERT"
+                );
+            } else if(!water_to_tank) {
+                divert_set_all_labels(
+                    divert_blink_on ? "WATER\nTO TEST" : "AUTO\nDIVERT"
+                );
+            } else {
+                divert_set_all_labels(
+                    divert_blink_on ? "WATER\nTO TANK" : "AUTO\nDIVERT"
+                );
+            }
+
+            divert_set_all_checked(divert_blink_on);
+            break;
+
+        default:
+            divert_mode = DIVERT_MODE_WATER_TO_TANK;
+            divert_set_all_labels("WATER\nTO TANK");
+            divert_set_all_checked(false);
+            break;
+    }
+}
+
+static void divert_blink_timer_cb(lv_timer_t * timer)
+{
+    (void)timer;
+
+    if(divert_mode != DIVERT_MODE_AUTO)
+        return;
+
+    divert_blink_elapsed_seconds++;
+
+    /*
+     * Slow blink while automatic routing is safely going to the tank.
+     * Fast blink while diverted to test or while TDS is invalid.
+     */
+    int blink_period_seconds =
+        (input_tds_valid && water_to_tank)
+            ? AUTO_DIVERT_SLOW_BLINK_SEC
+            : AUTO_DIVERT_FAST_BLINK_SEC;
+
+    if(divert_blink_elapsed_seconds >= blink_period_seconds) {
+        divert_blink_elapsed_seconds = 0;
+        divert_blink_on = !divert_blink_on;
+        update_water_labels();
+    }
+}
+
+static void divert_start_blink_timer(void)
+{
+    if(divert_blink_timer) {
+        lv_timer_del(divert_blink_timer);
+        divert_blink_timer = NULL;
+    }
+
+    divert_blink_elapsed_seconds = 0;
+    divert_blink_on = true;
+    update_water_labels();
+
+    divert_blink_timer =
+        lv_timer_create(divert_blink_timer_cb, 1000, NULL);
+}
+
+static void divert_stop_blink_timer(void)
+{
+    if(divert_blink_timer) {
+        lv_timer_del(divert_blink_timer);
+        divert_blink_timer = NULL;
+    }
+
+    divert_blink_elapsed_seconds = 0;
+    divert_blink_on = false;
+}
+
+static void divert_evaluate_auto(void)
+{
+    if(divert_mode != DIVERT_MODE_AUTO)
+        return;
+
+    bool divert_to_test = !water_to_tank;
+
+    /*
+     * Fail-safe:
+     * invalid TDS always diverts product water to test/waste.
+     */
+    if(!input_tds_valid) {
+        divert_to_test = true;
+    } else if(input_tds_ppm > AUTO_DIVERT_TDS_TO_TEST_PPM) {
+        divert_to_test = true;
+    } else if(input_tds_ppm < AUTO_DIVERT_TDS_TO_TANK_PPM) {
+        divert_to_test = false;
+    }
+    /*
+     * 490...510 ppm:
+     * keep the current physical route to provide hysteresis.
+     */
+
+    bool route_changed = water_to_tank == divert_to_test;
+
+    divert_apply_output(divert_to_test);
+
+    if(route_changed) {
+        divert_blink_elapsed_seconds = 0;
+        divert_blink_on = true;
+    }
+
+    update_water_labels();
 }
 
 static void feed_pump_event(lv_event_t * e)
@@ -306,11 +517,6 @@ static void feed_pump_event(lv_event_t * e)
      */
     if(overpressure_is_active()) {
         printf("FEED PUMP command ignored - overpressure homing active\n");
-        return;
-    }
-
-    if(overpressure_is_active()) {
-        printf("HP PUMP command ignored - overpressure homing active\n");
         return;
     }
 
@@ -364,6 +570,11 @@ static void hp_pump_event(lv_event_t * e)
      * During AUTO STOP, an OFF request is an emergency override.
      * ON requests are ignored until the sequence has finished.
      */
+    if(overpressure_is_active()) {
+        printf("HP PUMP command ignored - overpressure homing active\n");
+        return;
+    }
+
     if(auto_stop_visual_is_active()) {
         if(!requested_on)
             auto_stop_visual_emergency_abort();
@@ -424,12 +635,41 @@ static void tank_test_event(lv_event_t * e)
     if(lv_event_get_code(e) != LV_EVENT_CLICKED)
         return;
 
-    water_to_tank = !water_to_tank;
-    update_water_labels();
-    update_machine_outputs();
-}
+    switch(divert_mode) {
+        case DIVERT_MODE_WATER_TO_TANK:
+            /*
+             * First click:
+             * WATER TO TEST, fixed glow, relay ON.
+             */
+            divert_stop_blink_timer();
+            divert_mode = DIVERT_MODE_WATER_TO_TEST;
+            divert_apply_output(true);
+            update_water_labels();
+            break;
 
-static void update_autom_target_set_label(void);
+        case DIVERT_MODE_WATER_TO_TEST:
+            /*
+             * Second click:
+             * AUTO DIVERT. Evaluate the current TDS immediately.
+             */
+            divert_mode = DIVERT_MODE_AUTO;
+            divert_evaluate_auto();
+            divert_start_blink_timer();
+            break;
+
+        case DIVERT_MODE_AUTO:
+        default:
+            /*
+             * Third click:
+             * return to default WATER TO TANK, relay OFF, glow OFF.
+             */
+            divert_stop_blink_timer();
+            divert_mode = DIVERT_MODE_WATER_TO_TANK;
+            divert_apply_output(false);
+            update_water_labels();
+            break;
+    }
+}
 
 static void update_target_mode_label(void)
 {
@@ -450,6 +690,15 @@ static void target_mode_event(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED)
         return;
+
+    if(start_auto_on) {
+        lv_roller_set_selected(
+            ui_autom_screen_roller_target_mode,
+            auto_running_liters_mode ? 0 : 1,
+            LV_ANIM_OFF
+        );
+        return;
+    }
 
     update_target_mode_label();
 }
@@ -505,6 +754,9 @@ static void autom_target_plus_event(lv_event_t * e)
     if(lv_event_get_code(e) != LV_EVENT_CLICKED)
         return;
 
+    if(start_auto_on)
+        return;
+
     if(autom_is_liters_mode()) {
         if(autom_liters < 1005)
             autom_liters += 15;
@@ -527,6 +779,9 @@ static void autom_target_minus_event(lv_event_t * e)
     if(lv_event_get_code(e) != LV_EVENT_CLICKED)
         return;
 
+    if(start_auto_on)
+        return;
+
     if(autom_is_liters_mode()) {
         if(autom_liters >= 15)
             autom_liters -= 15;
@@ -545,16 +800,192 @@ static void autom_target_minus_event(lv_event_t * e)
 static void update_auto_production_state(void)
 {
     if(ui_autom_screen_label_auto_prod_set) {
-        if(auto_production_on) {
+        if(start_auto_on) {
+            lv_label_set_text(ui_autom_screen_label_auto_prod_set, "RUNNING");
+            lv_obj_set_style_text_color(
+                ui_autom_screen_label_auto_prod_set,
+                lv_color_hex(0x00C853),
+                LV_PART_MAIN | LV_STATE_DEFAULT
+            );
+        } else if(auto_production_on) {
             lv_label_set_text(ui_autom_screen_label_auto_prod_set, "ENABLED");
-            lv_obj_set_style_text_color(ui_autom_screen_label_auto_prod_set, lv_color_hex(0x00C853), LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_text_color(
+                ui_autom_screen_label_auto_prod_set,
+                lv_color_hex(0x00C853),
+                LV_PART_MAIN | LV_STATE_DEFAULT
+            );
         } else {
             lv_label_set_text(ui_autom_screen_label_auto_prod_set, "DISABLED");
-            lv_obj_set_style_text_color(ui_autom_screen_label_auto_prod_set, lv_color_hex(0x1D47A5), LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_text_color(
+                ui_autom_screen_label_auto_prod_set,
+                lv_color_hex(0x1D47A5),
+                LV_PART_MAIN | LV_STATE_DEFAULT
+            );
         }
     }
 
     set_checked(ui_autom_screen_btn_on_off, auto_production_on);
+}
+
+static void update_start_auto_state(void)
+{
+    if(ui_autom_screen_label_start_auto) {
+        lv_label_set_text(
+            ui_autom_screen_label_start_auto,
+            start_auto_on ? "STOP AUTO" : "START AUTO"
+        );
+    }
+
+    set_checked(ui_autom_screen_btn_start_auto, start_auto_on);
+}
+
+static void auto_production_update_runtime_label(void)
+{
+    if(!ui_autom_screen_countdown_ttg_ltg)
+        return;
+
+    static char buf[24];
+
+    if(!start_auto_on) {
+        update_autom_target_set_label();
+        return;
+    }
+
+    if(auto_running_liters_mode) {
+        float remaining = (float)autom_liters - auto_liters_produced;
+
+        if(remaining < 0.0f)
+            remaining = 0.0f;
+
+        snprintf(buf, sizeof(buf), "%.1f L", remaining);
+    } else {
+        int hours = auto_time_remaining_seconds / 3600;
+        int minutes = (auto_time_remaining_seconds % 3600) / 60;
+        int seconds = auto_time_remaining_seconds % 60;
+
+        if(hours > 0)
+            snprintf(buf, sizeof(buf), "%d:%02d:%02d", hours, minutes, seconds);
+        else
+            snprintf(buf, sizeof(buf), "%d:%02d", minutes, seconds);
+    }
+
+    lv_label_set_text(ui_autom_screen_countdown_ttg_ltg, buf);
+}
+
+static void auto_production_stop_tracking(const char * status_text)
+{
+    if(auto_production_timer) {
+        lv_timer_del(auto_production_timer);
+        auto_production_timer = NULL;
+    }
+
+    start_auto_on = false;
+    auto_time_remaining_seconds = 0;
+    auto_liters_produced = 0.0f;
+
+    update_start_auto_state();
+    update_auto_production_state();
+    update_autom_target_set_label();
+
+    if(status_text && ui_autom_screen_label_auto_prod_set)
+        lv_label_set_text(ui_autom_screen_label_auto_prod_set, status_text);
+}
+
+static void auto_production_timer_cb(lv_timer_t * timer)
+{
+    (void)timer;
+
+    if(!start_auto_on)
+        return;
+
+    bool target_reached = false;
+
+    if(auto_running_liters_mode) {
+        /*
+         * Integrate current production once per second:
+         * liters added = l/h / 3600.
+         */
+        if(input_flow_valid && input_flow_lph > 0.0f)
+            auto_liters_produced += input_flow_lph / 3600.0f;
+
+        if(auto_liters_produced >= (float)autom_liters)
+            target_reached = true;
+    } else {
+        if(auto_time_remaining_seconds > 0)
+            auto_time_remaining_seconds--;
+
+        if(auto_time_remaining_seconds <= 0)
+            target_reached = true;
+    }
+
+    auto_production_update_runtime_label();
+
+    if(target_reached) {
+        const char * source =
+            auto_running_liters_mode ? "LITERS TARGET" : "TIME TARGET";
+
+        auto_production_stop_tracking("TARGET REACHED");
+        auto_stop_start(source);
+    }
+}
+
+static bool auto_production_start_tracking(void)
+{
+    if(start_auto_on)
+        return false;
+
+    if(!auto_production_on) {
+        if(ui_autom_screen_label_auto_prod_set)
+            lv_label_set_text(ui_autom_screen_label_auto_prod_set, "ENABLE FIRST");
+        return false;
+    }
+
+    if(auto_stop_visual_is_active() || overpressure_is_active()) {
+        if(ui_autom_screen_label_auto_prod_set)
+            lv_label_set_text(ui_autom_screen_label_auto_prod_set, "STOP ACTIVE");
+        return false;
+    }
+
+    auto_running_liters_mode = autom_is_liters_mode();
+
+    if(auto_running_liters_mode) {
+        if(autom_liters <= 0) {
+            if(ui_autom_screen_label_auto_prod_set)
+                lv_label_set_text(ui_autom_screen_label_auto_prod_set, "SET TARGET");
+            return false;
+        }
+
+        auto_liters_produced = 0.0f;
+    } else {
+        if(autom_time_minutes <= 0) {
+            if(ui_autom_screen_label_auto_prod_set)
+                lv_label_set_text(ui_autom_screen_label_auto_prod_set, "SET TARGET");
+            return false;
+        }
+
+        auto_time_remaining_seconds = autom_time_minutes * 60;
+    }
+
+    start_auto_on = true;
+
+    if(auto_production_timer) {
+        lv_timer_del(auto_production_timer);
+        auto_production_timer = NULL;
+    }
+
+    auto_production_timer =
+        lv_timer_create(auto_production_timer_cb, 1000, NULL);
+
+    update_start_auto_state();
+    update_auto_production_state();
+    auto_production_update_runtime_label();
+
+    printf(
+        "AUTO PRODUCTION: started in %s mode\n",
+        auto_running_liters_mode ? "LITERS" : "TIME"
+    );
+
+    return true;
 }
 
 static void auto_production_event(lv_event_t * e)
@@ -562,20 +993,14 @@ static void auto_production_event(lv_event_t * e)
     if(lv_event_get_code(e) != LV_EVENT_CLICKED)
         return;
 
+    /*
+     * Disabling cancels only target monitoring, not the pumps.
+     */
+    if(auto_production_on && start_auto_on)
+        auto_production_stop_tracking(NULL);
+
     auto_production_on = !auto_production_on;
     update_auto_production_state();
-}
-
-static void update_start_auto_state(void)
-{
-    if(ui_autom_screen_label_start_auto) {
-        if(start_auto_on)
-            lv_label_set_text(ui_autom_screen_label_start_auto, "STOP AUTO");
-        else
-            lv_label_set_text(ui_autom_screen_label_start_auto, "START AUTO");
-    }
-
-    set_checked(ui_autom_screen_btn_start_auto, start_auto_on);
 }
 
 static void start_auto_event(lv_event_t * e)
@@ -583,8 +1008,17 @@ static void start_auto_event(lv_event_t * e)
     if(lv_event_get_code(e) != LV_EVENT_CLICKED)
         return;
 
-    start_auto_on = !start_auto_on;
-    update_start_auto_state();
+    if(start_auto_on) {
+        /*
+         * STOP AUTO cancels only target monitoring.
+         * Production keeps running.
+         */
+        auto_production_stop_tracking("CANCELLED");
+        printf("AUTO PRODUCTION: target monitoring cancelled\n");
+        return;
+    }
+
+    auto_production_start_tracking();
 }
 
 static void update_tank_diverting_state(void)
@@ -774,6 +1208,11 @@ static void update_tds_input(int tds_ppm, bool valid)
 {
     input_tds_ppm = tds_ppm;
     input_tds_valid = valid;
+
+    /*
+     * AUTO DIVERT reacts immediately to each new TDS sample.
+     */
+    divert_evaluate_auto();
 
     static char center_buf[16];
     static char upper_buf[16];
@@ -1238,6 +1677,9 @@ static void overpressure_trigger(void)
     if(overpressure_is_active())
         return;
 
+    if(start_auto_on)
+        auto_production_stop_tracking("OVERPRESSURE");
+
     /*
      * Overpressure has priority over AUTO STOP.
      * Stop any AUTO STOP timer/sequence before proceeding.
@@ -1310,6 +1752,9 @@ static void auto_stop_visual_reset(void)
 
     set_checked(ui_main_screen_btn_auto_stop, false);
     auto_stop_visual_set_label("AUTO\nSTOP");
+
+    update_start_auto_state();
+    update_auto_production_state();
 }
 
 static void auto_stop_visual_emergency_abort(void)
@@ -1467,23 +1912,17 @@ static void auto_stop_visual_timer_cb(lv_timer_t * timer)
     }
 }
 
-static void auto_stop_visual_event(lv_event_t * e)
+static bool auto_stop_start(const char * source)
 {
-    if(lv_event_get_code(e) != LV_EVENT_CLICKED)
-        return;
-
     /*
-     * No AUTO STOP or pump restart command is accepted while
-     * overpressure homing is active.
+     * Single soft-stop entry point:
+     * Main Screen, TIME target and LITERS target all call this.
      */
-    if(overpressure_is_active())
-        return;
+    if(overpressure_is_active() || auto_stop_visual_is_active())
+        return false;
 
-    /*
-     * AUTO STOP cannot be cancelled by pressing AUTO STOP again.
-     */
-    if(auto_stop_visual_is_active())
-        return;
+    if(start_auto_on)
+        auto_production_stop_tracking(NULL);
 
     auto_stop_visual_state = AUTO_STOP_VISUAL_HOMING;
     auto_stop_visual_phase_seconds = 2;
@@ -1499,7 +1938,20 @@ static void auto_stop_visual_event(lv_event_t * e)
     auto_stop_visual_timer =
         lv_timer_create(auto_stop_visual_timer_cb, 1000, NULL);
 
-    printf("AUTO STOP: started - simulated valve homing\n");
+    printf(
+        "AUTO STOP: started by %s - simulated valve homing\n",
+        source ? source : "UNKNOWN"
+    );
+
+    return true;
+}
+
+static void auto_stop_visual_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED)
+        return;
+
+    auto_stop_start("MAIN SCREEN");
 }
 
 
@@ -1538,6 +1990,7 @@ void ui_logic_init(void)
      */
     nerd_m31_write_coil(M31_COIL_HP_PUMP, false);
     nerd_m31_write_coil(M31_COIL_FEED_PUMP, false);
+    nerd_m31_write_coil(M31_COIL_TANK_TEST_DIVERT, false);
 
     // Temporary simulated values. Replace with real LAN/Modbus values later.
     update_pressure_input(0.0f, false);
