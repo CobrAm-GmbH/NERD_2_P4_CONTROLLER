@@ -1,6 +1,7 @@
 #include "ui.h"
 #include "ui_logic.h"
 #include <stdio.h>
+#include <stdint.h>
 #include "driver/temperature_sensor.h"
 #include "nvs_flash.h"
 #include "nvs.h"
@@ -53,7 +54,19 @@ static int auto_time_remaining_seconds = 0;
 static float auto_liters_produced = 0.0f;
 static bool auto_running_liters_mode = false;
 
+static bool hp_pump_fan_on = false;
+static bool auxiliary_fan_on = false;
 static bool tank_2_selected = false;
+
+static lv_timer_t * tds_buzzer_timer = NULL;
+static int tds_buzzer_delay_seconds = 0;
+static int tds_buzzer_pattern_phase = 0;
+static bool tds_buzzer_armed = false;
+static bool tds_buzzer_output_on = false;
+
+#define TDS_BUZZER_DELAY_SECONDS 300
+#define TDS_BUZZER_ON_SECONDS      1
+#define TDS_BUZZER_OFF_SECONDS     2
 
 static int pressure_preset_bar = 0;
 static bool auto_pressure_on = false;
@@ -99,6 +112,35 @@ static int settings_step_speed_saved_index = 0;
 
 static lv_timer_t * flushing_timer = NULL;
 static int flushing_remaining_seconds = 0;
+
+/* Persistent totals and resettable partial production logs. */
+static uint64_t log_total_hp_seconds = 0;
+static uint64_t log_total_water_ml = 0;
+static uint64_t log_partial_hp_seconds = 0;
+static uint64_t log_partial_water_ml = 0;
+static uint64_t log_filters_hp_seconds = 0;
+
+static double log_total_water_fraction_ml = 0.0;
+static double log_partial_water_fraction_ml = 0.0;
+
+static lv_timer_t * log_runtime_timer = NULL;
+static int log_seconds_since_save = 0;
+static bool log_previous_hp_pump_on = false;
+
+typedef enum
+{
+    LOG_RESET_NONE = 0,
+    LOG_RESET_HOURS,
+    LOG_RESET_LITERS,
+    LOG_RESET_FILTERS
+} log_reset_target_t;
+
+static log_reset_target_t log_reset_pending = LOG_RESET_NONE;
+static lv_timer_t * log_reset_timer = NULL;
+static int log_reset_seconds_remaining = 0;
+
+#define LOG_SAVE_INTERVAL_SECONDS 60
+#define LOG_RESET_CONFIRM_SECONDS 10
 
 /*
  * AUTO STOP - Stage 2
@@ -152,10 +194,14 @@ static int overpressure_phase_seconds = 0;
  * DO3 / coil 2 = Auxiliary 1
  * DO4 / coil 3 = Auxiliary 2
  */
-#define M31_COIL_FEED_PUMP   0
-#define M31_COIL_HP_PUMP     1
-#define M31_COIL_AUX_1       2
-#define M31_COIL_TANK_TEST_DIVERT  3
+#define M31_COIL_FEED_PUMP          0
+#define M31_COIL_HP_PUMP            1
+#define M31_COIL_FLUSH_VALVE        2
+#define M31_COIL_TANK_TEST_DIVERT   3
+#define M31_COIL_HP_PUMP_FAN        4
+#define M31_COIL_AUXILIARY_FAN      5
+#define M31_COIL_TANK_1_2_DIVERT    6
+#define M31_COIL_TDS_ALARM_BUZZER   7
 
 typedef enum
 {
@@ -242,6 +288,10 @@ static void save_settings_to_nvs(void);
 static void load_settings_from_nvs(void);
 static void apply_saved_settings_to_rollers(void);
 
+static void save_logs_to_nvs(void);
+static void load_logs_from_nvs(void);
+static void update_log_screen_values(void);
+
 
 static void set_checked(lv_obj_t * btn, bool checked)
 {
@@ -260,10 +310,10 @@ static void update_machine_outputs(void)
     machine_outputs[DO_FLUSH_VALVE] = flushing_cycle_on;
     machine_outputs[DO_TANK_TEST_DIVERT] = !water_to_tank;
 
-    machine_outputs[DO_HP_PUMP_FAN] = false;       // Future: HP pump fan logic
-    machine_outputs[DO_AUXILIARY_FAN] = false;     // Future: auxiliary fan logic
+    machine_outputs[DO_HP_PUMP_FAN] = hp_pump_fan_on;
+    machine_outputs[DO_AUXILIARY_FAN] = auxiliary_fan_on;
     machine_outputs[DO_TANK_1_2_DIVERT] = tank_2_selected;
-    machine_outputs[DO_ALARM_RELAY] = false;       // Future: alarm logic
+    machine_outputs[DO_ALARM_RELAY] = tds_buzzer_output_on;
 
     // Future:
     // nerd_io_write_outputs(machine_outputs);
@@ -319,6 +369,8 @@ static void overpressure_trigger(void);
 static void update_water_labels(void);
 static void divert_evaluate_auto(void);
 static void divert_stop_blink_timer(void);
+static void tds_buzzer_cancel(void);
+static void tds_buzzer_evaluate(void);
 
 static void divert_set_all_labels(const char * text)
 {
@@ -376,6 +428,8 @@ static void divert_apply_output(bool divert_to_test)
 
 static void update_water_labels(void)
 {
+    tds_buzzer_cancel();
+
     switch(divert_mode) {
         case DIVERT_MODE_WATER_TO_TANK:
             divert_set_all_labels("WATER\nTO TANK");
@@ -468,6 +522,106 @@ static void divert_stop_blink_timer(void)
     divert_blink_on = false;
 }
 
+static void tds_buzzer_write(bool on)
+{
+    if(tds_buzzer_output_on == on)
+        return;
+
+    tds_buzzer_output_on = on;
+    update_machine_outputs();
+    nerd_m31_write_coil(M31_COIL_TDS_ALARM_BUZZER, on);
+
+    printf("TDS BUZZER: %s | DO8 coil 7 -> %s\n",
+           on ? "SOUND" : "SILENT",
+           on ? "ON" : "OFF");
+}
+
+static void tds_buzzer_cancel(void)
+{
+    if(tds_buzzer_timer) {
+        lv_timer_del(tds_buzzer_timer);
+        tds_buzzer_timer = NULL;
+    }
+
+    tds_buzzer_armed = false;
+    tds_buzzer_delay_seconds = 0;
+    tds_buzzer_pattern_phase = 0;
+    tds_buzzer_write(false);
+}
+
+static bool tds_buzzer_anomaly_still_active(void)
+{
+    return divert_mode == DIVERT_MODE_AUTO &&
+           input_tds_valid &&
+           !water_to_tank;
+}
+
+static void tds_buzzer_timer_cb(lv_timer_t * timer)
+{
+    (void)timer;
+
+    if(!tds_buzzer_anomaly_still_active()) {
+        tds_buzzer_cancel();
+        return;
+    }
+
+    if(tds_buzzer_delay_seconds < TDS_BUZZER_DELAY_SECONDS) {
+        tds_buzzer_delay_seconds++;
+
+        if(tds_buzzer_delay_seconds >= TDS_BUZZER_DELAY_SECONDS) {
+            tds_buzzer_pattern_phase = 0;
+            tds_buzzer_write(true);
+            printf("TDS BUZZER: 5 minute delay elapsed\n");
+        }
+
+        return;
+    }
+
+    tds_buzzer_pattern_phase =
+        (tds_buzzer_pattern_phase + 1) %
+        (TDS_BUZZER_ON_SECONDS + TDS_BUZZER_OFF_SECONDS);
+
+    tds_buzzer_write(
+        tds_buzzer_pattern_phase < TDS_BUZZER_ON_SECONDS
+    );
+}
+
+static void tds_buzzer_arm(void)
+{
+    if(tds_buzzer_armed)
+        return;
+
+    tds_buzzer_armed = true;
+    tds_buzzer_delay_seconds = 0;
+    tds_buzzer_pattern_phase = 0;
+    tds_buzzer_write(false);
+
+    if(tds_buzzer_timer) {
+        lv_timer_del(tds_buzzer_timer);
+        tds_buzzer_timer = NULL;
+    }
+
+    tds_buzzer_timer = lv_timer_create(tds_buzzer_timer_cb, 1000, NULL);
+
+    printf("TDS BUZZER: armed - 5 minute delay started\n");
+}
+
+static void tds_buzzer_evaluate(void)
+{
+    if(divert_mode == DIVERT_MODE_AUTO &&
+       input_tds_valid &&
+       input_tds_ppm > AUTO_DIVERT_TDS_TO_TEST_PPM &&
+       !water_to_tank) {
+        tds_buzzer_arm();
+        return;
+    }
+
+    if(tds_buzzer_armed && tds_buzzer_anomaly_still_active())
+        return;
+
+    tds_buzzer_cancel();
+}
+
 static void divert_evaluate_auto(void)
 {
     if(divert_mode != DIVERT_MODE_AUTO)
@@ -501,6 +655,7 @@ static void divert_evaluate_auto(void)
     }
 
     update_water_labels();
+    tds_buzzer_evaluate();
 }
 
 static void feed_pump_event(lv_event_t * e)
@@ -509,6 +664,12 @@ static void feed_pump_event(lv_event_t * e)
         return;
 
     bool requested_on = !feed_pump_on;
+
+    if(requested_on && flushing_cycle_on) {
+        printf("FEED PUMP: START REJECTED - FLUSHING CYCLE is active\n");
+        update_feed_pump_state();
+        return;
+    }
 
     /*
      * During AUTO STOP, an OFF request is an emergency override:
@@ -566,6 +727,12 @@ static void hp_pump_event(lv_event_t * e)
 
     bool requested_on = !hp_pump_on;
 
+    if(requested_on && flushing_cycle_on) {
+        printf("HP PUMP: START REJECTED - FLUSHING CYCLE is active\n");
+        update_hp_pump_state();
+        return;
+    }
+
     /*
      * During AUTO STOP, an OFF request is an emergency override.
      * ON requests are ignored until the sequence has finished.
@@ -619,15 +786,47 @@ static void flushing_cycle_event(lv_event_t * e)
     if(lv_event_get_code(e) != LV_EVENT_CLICKED)
         return;
 
-    flushing_cycle_on = !flushing_cycle_on;
-
-    if(flushing_cycle_on)
-        start_flushing_countdown();
-    else
+    if(flushing_cycle_on) {
+        flushing_cycle_on = false;
         stop_flushing_countdown();
+        update_flushing_cycle_state();
+        update_machine_outputs();
 
+        nerd_m31_write_coil(M31_COIL_FLUSH_VALVE, false);
+
+        printf("FLUSHING CYCLE: cancelled - DO3 coil 2 OFF\n");
+        return;
+    }
+
+    if(feed_pump_on || hp_pump_on) {
+        printf("FLUSHING CYCLE: START REJECTED - pumps must be OFF\n");
+        update_flushing_cycle_state();
+        return;
+    }
+
+    if(auto_stop_visual_is_active() || overpressure_is_active()) {
+        printf("FLUSHING CYCLE: START REJECTED - stop sequence active\n");
+        update_flushing_cycle_state();
+        return;
+    }
+
+    settings_flush_runtime_index = clamp_int(
+        (int)lv_roller_get_selected(ui_settings_screen_roller_flush_preset),
+        0,
+        SETTINGS_FLUSH_MAX_INDEX
+    );
+
+    flushing_cycle_on = true;
+    start_flushing_countdown();
     update_flushing_cycle_state();
     update_machine_outputs();
+
+    nerd_m31_write_coil(M31_COIL_FLUSH_VALVE, true);
+
+    printf(
+        "FLUSHING CYCLE: started for %d seconds - DO3 coil 2 ON\n",
+        flushing_remaining_seconds
+    );
 }
 
 static void tank_test_event(lv_event_t * e)
@@ -1021,6 +1220,38 @@ static void start_auto_event(lv_event_t * e)
     auto_production_start_tracking();
 }
 
+static void update_hp_pump_fan_state(void)
+{
+    set_checked(ui_aux_screen_btn_hp_fan, hp_pump_fan_on);
+}
+
+static void hp_pump_fan_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED)
+        return;
+
+    hp_pump_fan_on = !hp_pump_fan_on;
+    update_hp_pump_fan_state();
+    update_machine_outputs();
+    nerd_m31_write_coil(M31_COIL_HP_PUMP_FAN, hp_pump_fan_on);
+}
+
+static void update_auxiliary_fan_state(void)
+{
+    set_checked(ui_aux_screen_btn_aux, auxiliary_fan_on);
+}
+
+static void auxiliary_fan_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED)
+        return;
+
+    auxiliary_fan_on = !auxiliary_fan_on;
+    update_auxiliary_fan_state();
+    update_machine_outputs();
+    nerd_m31_write_coil(M31_COIL_AUXILIARY_FAN, auxiliary_fan_on);
+}
+
 static void update_tank_diverting_state(void)
 {
     if(ui_aux_screen_label__tank_diverting) {
@@ -1041,6 +1272,12 @@ static void tank_diverting_event(lv_event_t * e)
     tank_2_selected = !tank_2_selected;
     update_tank_diverting_state();
     update_machine_outputs();
+    update_log_screen_values();
+
+    nerd_m31_write_coil(
+        M31_COIL_TANK_1_2_DIVERT,
+        tank_2_selected
+    );
 }
 
 static void update_settings_flushing_ttg(void)
@@ -1399,6 +1636,294 @@ static void p4_cpu_temperature_timer_cb(lv_timer_t * timer)
     update_aux_temperature_labels();
 }
 
+static void format_hours_minutes(uint64_t total_seconds,
+                                 lv_obj_t * hours_label,
+                                 lv_obj_t * minutes_label)
+{
+    uint64_t hours = total_seconds / 3600ULL;
+    uint64_t minutes = (total_seconds % 3600ULL) / 60ULL;
+
+    char hours_buf[32];
+    char minutes_buf[16];
+
+    snprintf(hours_buf, sizeof(hours_buf), "%llu h",
+             (unsigned long long)hours);
+    snprintf(minutes_buf, sizeof(minutes_buf), "%llu m",
+             (unsigned long long)minutes);
+
+    if(hours_label) lv_label_set_text(hours_label, hours_buf);
+    if(minutes_label) lv_label_set_text(minutes_label, minutes_buf);
+}
+
+static void update_log_screen_values(void)
+{
+    format_hours_minutes(
+        log_total_hp_seconds,
+        ui_log_screen_label_hp_pump_hours,
+        ui_log_screen_label_hp_pump_minutes
+    );
+
+    format_hours_minutes(
+        log_partial_hp_seconds,
+        ui_log_screen_label_hp_pump_hours_partial,
+        ui_log_screen_label_hp_pump_minutes_partial
+    );
+
+    if(ui_log_screen_label_water_produced_liters) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.1f L",
+                 (double)log_total_water_ml / 1000.0);
+        lv_label_set_text(ui_log_screen_label_water_produced_liters, buf);
+    }
+
+    if(ui_log_screen_label_water_produced_liters_partial) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.1f L",
+                 (double)log_partial_water_ml / 1000.0);
+        lv_label_set_text(
+            ui_log_screen_label_water_produced_liters_partial,
+            buf
+        );
+    }
+
+    if(ui_log_screen_label_average_prod_lh) {
+        char buf[32];
+        double average_lph = 0.0;
+
+        if(log_total_hp_seconds > 0) {
+            average_lph =
+                ((double)log_total_water_ml / 1000.0) *
+                3600.0 /
+                (double)log_total_hp_seconds;
+        }
+
+        snprintf(buf, sizeof(buf), "%.1f l/h", average_lph);
+        lv_label_set_text(ui_log_screen_label_average_prod_lh, buf);
+    }
+
+    if(ui_log_screen_label_filters_hours_count) {
+        char buf[32];
+        uint64_t hours = log_filters_hp_seconds / 3600ULL;
+        uint64_t minutes = (log_filters_hp_seconds % 3600ULL) / 60ULL;
+
+        snprintf(buf, sizeof(buf), "%llu h %llu m",
+                 (unsigned long long)hours,
+                 (unsigned long long)minutes);
+
+        lv_label_set_text(ui_log_screen_label_filters_hours_count, buf);
+    }
+}
+
+static void save_logs_to_nvs(void)
+{
+    nvs_handle_t nvs;
+
+    esp_err_t err = nvs_open("nerd_logs", NVS_READWRITE, &nvs);
+    if(err != ESP_OK)
+        return;
+
+    nvs_set_u64(nvs, "total_s", log_total_hp_seconds);
+    nvs_set_u64(nvs, "total_ml", log_total_water_ml);
+    nvs_set_u64(nvs, "part_s", log_partial_hp_seconds);
+    nvs_set_u64(nvs, "part_ml", log_partial_water_ml);
+    nvs_set_u64(nvs, "filt_s", log_filters_hp_seconds);
+
+    nvs_commit(nvs);
+    nvs_close(nvs);
+}
+
+static void load_logs_from_nvs(void)
+{
+    nvs_handle_t nvs;
+
+    if(nvs_open("nerd_logs", NVS_READONLY, &nvs) != ESP_OK)
+        return;
+
+    nvs_get_u64(nvs, "total_s", &log_total_hp_seconds);
+    nvs_get_u64(nvs, "total_ml", &log_total_water_ml);
+    nvs_get_u64(nvs, "part_s", &log_partial_hp_seconds);
+    nvs_get_u64(nvs, "part_ml", &log_partial_water_ml);
+    nvs_get_u64(nvs, "filt_s", &log_filters_hp_seconds);
+
+    nvs_close(nvs);
+}
+
+static void log_add_water_for_one_second(void)
+{
+    if(!input_flow_valid || input_flow_lph <= 0.0f)
+        return;
+
+    double ml_this_second = (double)input_flow_lph / 3.6;
+
+    log_total_water_fraction_ml += ml_this_second;
+    log_partial_water_fraction_ml += ml_this_second;
+
+    if(log_total_water_fraction_ml >= 1.0) {
+        uint64_t whole_ml = (uint64_t)log_total_water_fraction_ml;
+        log_total_water_ml += whole_ml;
+        log_total_water_fraction_ml -= (double)whole_ml;
+    }
+
+    if(log_partial_water_fraction_ml >= 1.0) {
+        uint64_t whole_ml = (uint64_t)log_partial_water_fraction_ml;
+        log_partial_water_ml += whole_ml;
+        log_partial_water_fraction_ml -= (double)whole_ml;
+    }
+}
+
+static void log_runtime_timer_cb(lv_timer_t * timer)
+{
+    (void)timer;
+
+    if(hp_pump_on) {
+        log_total_hp_seconds++;
+        log_partial_hp_seconds++;
+        log_filters_hp_seconds++;
+
+        log_add_water_for_one_second();
+
+        log_seconds_since_save++;
+
+        if(log_seconds_since_save >= LOG_SAVE_INTERVAL_SECONDS) {
+            save_logs_to_nvs();
+            log_seconds_since_save = 0;
+        }
+    }
+
+    if(log_previous_hp_pump_on && !hp_pump_on) {
+        save_logs_to_nvs();
+        log_seconds_since_save = 0;
+    }
+
+    log_previous_hp_pump_on = hp_pump_on;
+    update_log_screen_values();
+}
+
+static lv_obj_t * log_reset_label(log_reset_target_t target)
+{
+    switch(target) {
+        case LOG_RESET_HOURS:
+            return ui_log_screen_label_reset_hours;
+        case LOG_RESET_LITERS:
+            return ui_log_screen_label_reset_liters;
+        case LOG_RESET_FILTERS:
+            return ui_log_screen_label_reset_filters;
+        default:
+            return NULL;
+    }
+}
+
+static lv_obj_t * log_reset_button(log_reset_target_t target)
+{
+    switch(target) {
+        case LOG_RESET_HOURS:
+            return ui_log_screen_btn_reset_hours;
+        case LOG_RESET_LITERS:
+            return ui_log_screen_btn_reset_liters;
+        case LOG_RESET_FILTERS:
+            return ui_log_screen_btn_reset_filters;
+        default:
+            return NULL;
+    }
+}
+
+static void log_reset_cancel_confirmation(void)
+{
+    if(log_reset_timer) {
+        lv_timer_del(log_reset_timer);
+        log_reset_timer = NULL;
+    }
+
+    lv_obj_t * label = log_reset_label(log_reset_pending);
+    lv_obj_t * button = log_reset_button(log_reset_pending);
+
+    if(label)
+        lv_label_set_text(label, "RESET");
+
+    set_checked(button, false);
+
+    log_reset_pending = LOG_RESET_NONE;
+    log_reset_seconds_remaining = 0;
+}
+
+static void log_reset_timer_cb(lv_timer_t * timer)
+{
+    (void)timer;
+
+    if(log_reset_seconds_remaining > 0)
+        log_reset_seconds_remaining--;
+
+    if(log_reset_seconds_remaining <= 0)
+        log_reset_cancel_confirmation();
+}
+
+static void log_reset_apply(log_reset_target_t target)
+{
+    switch(target) {
+        case LOG_RESET_HOURS:
+            log_partial_hp_seconds = 0;
+            break;
+
+        case LOG_RESET_LITERS:
+            log_partial_water_ml = 0;
+            log_partial_water_fraction_ml = 0.0;
+            break;
+
+        case LOG_RESET_FILTERS:
+            log_filters_hp_seconds = 0;
+            break;
+
+        default:
+            return;
+    }
+
+    log_reset_cancel_confirmation();
+    update_log_screen_values();
+    save_logs_to_nvs();
+}
+
+static void log_reset_request(log_reset_target_t target)
+{
+    if(log_reset_pending == target &&
+       log_reset_seconds_remaining > 0) {
+        log_reset_apply(target);
+        return;
+    }
+
+    log_reset_cancel_confirmation();
+
+    log_reset_pending = target;
+    log_reset_seconds_remaining = LOG_RESET_CONFIRM_SECONDS;
+
+    lv_obj_t * label = log_reset_label(target);
+    lv_obj_t * button = log_reset_button(target);
+
+    if(label)
+        lv_label_set_text(label, "PRESS AGAIN\nWITHIN 10 SEC");
+
+    set_checked(button, true);
+
+    log_reset_timer = lv_timer_create(log_reset_timer_cb, 1000, NULL);
+}
+
+static void log_reset_hours_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) == LV_EVENT_CLICKED)
+        log_reset_request(LOG_RESET_HOURS);
+}
+
+static void log_reset_liters_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) == LV_EVENT_CLICKED)
+        log_reset_request(LOG_RESET_LITERS);
+}
+
+static void log_reset_filters_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) == LV_EVENT_CLICKED)
+        log_reset_request(LOG_RESET_FILTERS);
+}
+
 static void settings_save_event(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_CLICKED)
@@ -1434,7 +1959,8 @@ static void settings_flush_preset_event(lv_event_t * e)
         SETTINGS_FLUSH_MAX_INDEX
     );
 
-    update_settings_flushing_ttg();
+    if(!flushing_cycle_on)
+        update_settings_flushing_ttg();
 }
 
 static void settings_flow_fine_tuning_event(lv_event_t * e)
@@ -1580,7 +2106,10 @@ static void flushing_timer_cb(lv_timer_t * timer)
 
         update_flushing_cycle_state();
         update_machine_outputs();
+        nerd_m31_write_coil(M31_COIL_FLUSH_VALVE, false);
         update_settings_flushing_ttg();
+
+        printf("FLUSHING CYCLE: complete - DO3 coil 2 OFF\n");
     }
 }
 
@@ -1968,6 +2497,7 @@ void ui_logic_init(void)
 
     load_settings_from_nvs();
     apply_saved_settings_to_rollers();
+    load_logs_from_nvs();
 
     // Initial UI state sync
     update_water_labels();
@@ -1981,6 +2511,8 @@ void ui_logic_init(void)
     update_auto_production_state();
     update_start_auto_state();
     update_auto_pressure_state();
+    update_hp_pump_fan_state();
+    update_auxiliary_fan_state();
     update_tank_diverting_state();
     update_machine_outputs();
 
@@ -1990,7 +2522,12 @@ void ui_logic_init(void)
      */
     nerd_m31_write_coil(M31_COIL_HP_PUMP, false);
     nerd_m31_write_coil(M31_COIL_FEED_PUMP, false);
+    nerd_m31_write_coil(M31_COIL_FLUSH_VALVE, false);
     nerd_m31_write_coil(M31_COIL_TANK_TEST_DIVERT, false);
+    nerd_m31_write_coil(M31_COIL_HP_PUMP_FAN, false);
+    nerd_m31_write_coil(M31_COIL_AUXILIARY_FAN, false);
+    nerd_m31_write_coil(M31_COIL_TANK_1_2_DIVERT, false);
+    nerd_m31_write_coil(M31_COIL_TDS_ALARM_BUZZER, false);
 
     // Temporary simulated values. Replace with real LAN/Modbus values later.
     update_pressure_input(0.0f, false);
@@ -2009,6 +2546,9 @@ void ui_logic_init(void)
     update_aux_temperature_labels();
 	
 	lv_timer_create(p4_cpu_temperature_timer_cb, 5000, NULL);
+
+    log_previous_hp_pump_on = hp_pump_on;
+    log_runtime_timer = lv_timer_create(log_runtime_timer_cb, 1000, NULL);
 	
     update_debug_screen_text();
 	
@@ -2066,7 +2606,43 @@ void ui_logic_init(void)
         lv_obj_add_event_cb(ui_autom_screen_btn_start_auto, start_auto_event, LV_EVENT_CLICKED, NULL);
     }
 
+    // LOG screen
+    if(ui_log_screen_btn_reset_hours) {
+        lv_obj_add_event_cb(
+            ui_log_screen_btn_reset_hours,
+            log_reset_hours_event,
+            LV_EVENT_CLICKED,
+            NULL
+        );
+    }
+
+    if(ui_log_screen_btn_reset_liters) {
+        lv_obj_add_event_cb(
+            ui_log_screen_btn_reset_liters,
+            log_reset_liters_event,
+            LV_EVENT_CLICKED,
+            NULL
+        );
+    }
+
+    if(ui_log_screen_btn_reset_filters) {
+        lv_obj_add_event_cb(
+            ui_log_screen_btn_reset_filters,
+            log_reset_filters_event,
+            LV_EVENT_CLICKED,
+            NULL
+        );
+    }
+
     // AUX screen
+    if(ui_aux_screen_btn_hp_fan) {
+        lv_obj_add_event_cb(ui_aux_screen_btn_hp_fan, hp_pump_fan_event, LV_EVENT_CLICKED, NULL);
+    }
+
+    if(ui_aux_screen_btn_aux) {
+        lv_obj_add_event_cb(ui_aux_screen_btn_aux, auxiliary_fan_event, LV_EVENT_CLICKED, NULL);
+    }
+
     if(ui_aux_screen_btn_tank_diverting) {
         lv_obj_add_event_cb(ui_aux_screen_btn_tank_diverting, tank_diverting_event, LV_EVENT_CLICKED, NULL);
     }
